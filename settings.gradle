@@ -1,0 +1,3 @@
+rootProject.name = 'repair-pipelining'
+include 'lrc'
+include 'rs'
