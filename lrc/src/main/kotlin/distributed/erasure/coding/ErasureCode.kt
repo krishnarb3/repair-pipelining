@@ -12,7 +12,7 @@ fun main() {
 
 //    encode(inputFileName, encodeOutputSuffix)
     encodeUsingSingle(inputFileName, encodeOutputSuffix)
-    decode(inputFileName, outputFileName, encodeOutputSuffix, listOf())
+    decode(inputFileName, outputFileName, encodeOutputSuffix, listOf(7))
 
     println("Done")
 }
@@ -35,7 +35,7 @@ fun encode(inputFileName: String, outputFileSuffix: String) {
         rs.encodeParity(shards, 0, blockSize.toInt())
 
         for (j in 0 until ErasureUtil.R + 1) {
-            val outputFile = File("${i * ErasureUtil.R + j}-$outputFileSuffix")
+            val outputFile = File("${i * (ErasureUtil.R+1) + j}-$outputFileSuffix")
             val writer = DataOutputStream(BufferedOutputStream(outputFile.outputStream()))
             writer.write(shards[j])
             writer.close()
@@ -67,7 +67,7 @@ fun encodeUsingSingle(inputFileName: String, outputFileSuffix: String) {
         }
 
         for (j in 0 until ErasureUtil.R + 1) {
-            val outputFile = File("${i * ErasureUtil.R + j}-$outputFileSuffix")
+            val outputFile = File("${i * (ErasureUtil.R+1) + j}-$outputFileSuffix")
             val writer = DataOutputStream(BufferedOutputStream(outputFile.outputStream()))
             writer.write(shards[j])
             writer.close()
@@ -84,24 +84,34 @@ fun decode(inputFileName: String, outputFileName: String, outputFileSuffix: Stri
 
     val shards = Array<ByteArray>(ErasureUtil.N) { ByteArray(blockSize.toInt()) }
 
-    for (i in 0 until ErasureUtil.N / ErasureUtil.R) {
+    for (i in 0 until ErasureUtil.K / ErasureUtil.R) {
         for (j in 0 until ErasureUtil.R + 1) {
-            val index = i * ErasureUtil.R + j
+            val index = (i * (ErasureUtil.R + 1)) + j
             val file = File("$index-$outputFileSuffix")
             if (!missingIndices.contains(index) && file.exists()) {
                 val inputStream = DataInputStream(BufferedInputStream(file.inputStream()))
                 shards[index] = inputStream.readAllBytes()
                 inputStream.close()
+            } else {
+                println("Missing index: $index")
             }
         }
-        val shardsPresent = (i until i + ErasureUtil.R + 1).map { !missingIndices.contains(it) }.toBooleanArray()
-        rs.decodeMissing(shards.sliceArray(i until i + ErasureUtil.R + 1), shardsPresent, 0, blockSize.toInt())
+        val sliceStart = i * (ErasureUtil.R + 1)
+        val sliceEnd = i * (ErasureUtil.R + 1) + ErasureUtil.R + 1
+        val shardsPresent = (sliceStart until sliceEnd).map { !missingIndices.contains(it) }.toBooleanArray()
+        val shardSlice = shards.sliceArray(sliceStart until sliceEnd)
+        rs.decodeMissing(shardSlice, shardsPresent, 0, blockSize.toInt())
+
+        var counter = 0
+        for (entry in shardSlice) {
+            shards[sliceStart + counter++] = entry
+        }
     }
 
     val outputFile = File(outputFileName)
     val writer = DataOutputStream(BufferedOutputStream(outputFile.outputStream()))
     shards.mapIndexed { index, bytes ->
-        if (index == 0 || (index + 1) % ErasureUtil.R + 1 != 0) {
+        if (index == 0 || (index + 1) % (ErasureUtil.R + 1) != 0) {
             writer.write(bytes)
         }
     }
