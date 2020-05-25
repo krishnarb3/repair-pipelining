@@ -102,6 +102,18 @@ public class ReedSolomon {
                 offset, byteCount);
     }
 
+    public void encodeParitySingle(byte[] shard, int inputIndex, int outputIndex, int offset, int byteCount) {
+        byte[] output = new byte [shard.length];
+        System.arraycopy(shard, dataShardCount, output, 0, parityShardCount);
+
+        InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
+        codingLoopSingle.codeSomeShards(
+                parityRows,
+                shard, inputIndex, output, outputIndex,
+                offset, byteCount
+        );
+    }
+
     /**
      * Returns true if the parity shards contain the right data.
      *

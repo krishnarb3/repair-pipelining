@@ -10,7 +10,8 @@ fun main() {
     val encodeOutputSuffix = "LP.jpg"
     val outputFileName = "$prefix/Desktop/LP-copy.jpg"
 
-    encode(inputFileName, encodeOutputSuffix)
+//    encode(inputFileName, encodeOutputSuffix)
+    encodeUsingSingle(inputFileName, encodeOutputSuffix)
     decode(inputFileName, outputFileName, encodeOutputSuffix, listOf())
 
     println("Done")
@@ -43,6 +44,37 @@ fun encode(inputFileName: String, outputFileSuffix: String) {
 
     reader.close()
 
+}
+
+fun encodeUsingSingle(inputFileName: String, outputFileSuffix: String) {
+    val file = File(inputFileName)
+    val reader = DataInputStream(BufferedInputStream(file.inputStream()))
+
+    val len = file.length()
+    val blockSize = len / ErasureUtil.K
+
+    val rs = ReedSolomon.create(ErasureUtil.R, 1)
+
+    for (i in 0 until ErasureUtil.K / ErasureUtil.R) {
+        val shards = Array<ByteArray>(ErasureUtil.R + 1) { ByteArray(blockSize.toInt()) }
+        for (j in 0 until ErasureUtil.R) {
+            val bytesRead = reader.readNBytes(blockSize.toInt())
+            shards[j] = bytesRead
+        }
+
+        for (index in (0 until shards.size - 1)) {
+            rs.encodeParitySingle(shards[index], index, 0, 0, blockSize.toInt())
+        }
+
+        for (j in 0 until ErasureUtil.R + 1) {
+            val outputFile = File("${i * ErasureUtil.R + j}-$outputFileSuffix")
+            val writer = DataOutputStream(BufferedOutputStream(outputFile.outputStream()))
+            writer.write(shards[j])
+            writer.close()
+        }
+    }
+
+    reader.close()
 }
 
 fun decode(inputFileName: String, outputFileName: String, outputFileSuffix: String, missingIndices: List<Int>) {
