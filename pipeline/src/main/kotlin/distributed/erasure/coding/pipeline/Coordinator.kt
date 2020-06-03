@@ -1,25 +1,26 @@
 package distributed.erasure.coding.pipeline
 
+import distributed.erasure.coding.LRCErasureUtil
+import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
+import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
 import redis.clients.jedis.JedisPoolConfig
 import redis.clients.jedis.JedisPubSub
-import java.io.*
 import java.util.concurrent.CountDownLatch
 
 class Coordinator(
     val nodeHostMap: MutableMap<Int, Pair<String, Int>>,
     val blockNodeMap: MutableMap<String, Int>
 ) {
-    private val BLOCK_SIZE = 1024 * 1024
-    private val WORD_LENGTH = 1024
-
     private val COORDINATOR_CHANNEL_NAME = "coordinator"
     private val HELPER_CHANNEL_PREFIX = "helper"
 
     private val JEDIS_POOL_MAX_SIZE = System.getenv("jedis.pool.max.size").toInt()
     private val COORDINATOR_IP = System.getenv("coordinator.ip")
     private val REDIS_PORT = 6379
+    private val erasureCode = ErasureCode.valueOf(System.getenv("erasure.code"))
+    private val fetchMethod = System.getenv("fetch.method") ?: "normal"
 
     private var jedis: Jedis
 
@@ -54,13 +55,21 @@ class Coordinator(
 
     private fun fetchBlock(message: String) {
         val requesterNodeId = message.split(" ")[0].toInt()
-        val requesterHost = nodeHostMap[requesterNodeId]
         val blockId = message.split(" ")[1]
         val senderNodeId = blockNodeMap[blockId] ?: -1
-        fetchBlock(requesterNodeId, requesterHost, senderNodeId, blockId)
+        if (fetchMethod == "pipeline") {
+            fetchBlockUsingPipelining(requesterNodeId, blockId)
+        } else {
+            fetchBlock(requesterNodeId, senderNodeId, blockId)
+        }
     }
 
-    private fun fetchBlock(requesterNodeId: Int, requesterHostPort: Pair<String, Int>?, senderNodeId: Int, blockId: String) {
+    private fun fetchBlock(
+        requesterNodeId: Int,
+        senderNodeId: Int,
+        blockId: String
+    ) {
+        val requesterHostPort = nodeHostMap[requesterNodeId]
         if (requesterHostPort == null || senderNodeId == -1 || blockId == "") {
             System.err.println("Error occurred while fetching block")
             return
@@ -77,29 +86,68 @@ class Coordinator(
         )
     }
 
-    private fun fetchBlockUsingPipelining(requesterNodeId: Int, blockId: Int) {
+    private fun fetchBlockUsingPipelining(
+        finalNodeId: Int,
+        blockId: String
+    ) {
+        val nodesPath = when (erasureCode) {
+            ErasureCode.LRC -> getNodesPathForLRC(blockId)
+            else -> getNodesPath(blockId)
+        }
+
+        if (nodesPath.size < 2) {
+            return
+        }
 
         for (i in 0 until BLOCK_SIZE / WORD_LENGTH) {
-            repairStripe(i)
+            var senderNodeId = nodesPath[0].first
+            var requesterNodeId = nodesPath[1].first
+            for (j in 1 until nodesPath.size) {
+                requesterNodeId = nodesPath[j].first
+                val currBlockId = nodesPath[j].second
+                repairStripe(requesterNodeId, senderNodeId, currBlockId, i)
+                senderNodeId = requesterNodeId
+            }
         }
     }
 
-    private fun repairStripe(stripeIndex: Int) {
-        val nodesPath = getNodesPath(stripeIndex)
-
-        val startNode = nodesPath.firstOrNull()
-
-        if (startNode == null) {
+    private fun repairStripe(
+        requesterNodeId: Int,
+        senderNodeId: Int,
+        blockId: String,
+        stripeIndex: Int
+    ) {
+        val requesterHostPort = nodeHostMap[requesterNodeId]
+        if (requesterHostPort == null) {
             System.err.println("No node path found for repair pipelining stripe index: $stripeIndex")
         } else {
-            // TODO: Change the output array
-            val erasedWordsCount = 1
-            val output = (0 until erasedWordsCount).map { ByteArray(WORD_LENGTH) }.toTypedArray()
-            startNode.repairAndPipeline(stripeIndex, output, nodesPath)
+            val requesterHost = requesterHostPort.first
+            val requesterPort = requesterHostPort.second
+            jedis.publish(
+                "$HELPER_CHANNEL_PREFIX.$requesterNodeId.receive.pipeline.from",
+                "$senderNodeId $blockId $stripeIndex"
+            )
+            jedis.publish(
+                "$HELPER_CHANNEL_PREFIX.$senderNodeId.send.pipeline.to",
+                "$requesterHost $requesterPort $blockId $stripeIndex"
+            )
         }
     }
 
-    private fun getNodesPath(blockId: Int): List<Node> {
+    private fun getNodesPathForLRC(blockId: String): List<Pair<Int, String>> {
+        // Change return list using block -> node mapping
+
+        val numBlocks = LRCErasureUtil.N
+        val numDataBlocks = LRCErasureUtil.K
+        val numGroupBlocks = LRCErasureUtil.R
+
+        val startNodeId = blockId.toInt() / (numGroupBlocks + 1)
+        val endNodeId = startNodeId + numGroupBlocks
+
+        return (startNodeId..endNodeId).filter { it != blockId.toInt() }.map { Pair(it, it.toString()) }.toList()
+    }
+
+    private fun getNodesPath(blockId: String): List<Pair<Int, String>> {
         return listOf()
     }
 }
