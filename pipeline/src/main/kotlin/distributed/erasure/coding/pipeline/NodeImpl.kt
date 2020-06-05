@@ -74,8 +74,8 @@ fun main() {
     while (true) {
         val latch = CountDownLatch(1)
         node.setLatch(latch)
-        if (System.getenv("node.local.id").toInt() == 2 && fetchCounter.get() == 0) {
-            node.fetchBlock("0-LP.jpg")
+        if (System.getenv("node.local.id").toInt() == 3 && fetchCounter.get() == 0) {
+            node.fetchBlock("3-LP.jpg")
             fetchCounter.incrementAndGet()
         }
         latch.await()

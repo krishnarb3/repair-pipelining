@@ -104,7 +104,7 @@ class Coordinator(
             var requesterNodeId = nodesPath[1].first
             for (j in 1 until nodesPath.size) {
                 requesterNodeId = nodesPath[j].first
-                val currBlockId = nodesPath[j].second
+                val currBlockId = nodesPath[j - 1].second
                 repairStripe(requesterNodeId, senderNodeId, currBlockId, i)
                 senderNodeId = requesterNodeId
             }
@@ -141,10 +141,19 @@ class Coordinator(
         val numDataBlocks = LRCErasureUtil.K
         val numGroupBlocks = LRCErasureUtil.R
 
-        val startNodeId = blockId.toInt() / (numGroupBlocks + 1)
-        val endNodeId = startNodeId + numGroupBlocks
+        val startNodeId = (blockNodeMap.keys.indexOf(blockId) / (numGroupBlocks + 1)) * (numGroupBlocks + 1)
+        val endNodeId =
+            (blockNodeMap.keys.indexOf(blockId) / (numGroupBlocks + 1)) * (numGroupBlocks + 1) + numGroupBlocks
 
-        return (startNodeId..endNodeId).filter { it != blockId.toInt() }.map { Pair(it, it.toString()) }.toList()
+        // TODO: Change this logic
+        println("$startNodeId..$endNodeId")
+
+        val res = (startNodeId..endNodeId).filter { it != blockNodeMap[blockId] }.map { nodeId ->
+            Pair(nodeId, blockNodeMap.filterValues { it == nodeId }.keys.first())
+        }.toList()
+
+        println(res)
+        return res
     }
 
     private fun getNodesPath(blockId: String): List<Pair<Int, String>> {
@@ -154,13 +163,16 @@ class Coordinator(
 
 fun main() {
     val nodeHostMap = mutableMapOf(
-        1 to Pair("127.0.0.1", 4444),
-        2 to Pair("127.0.0.1", 7777)
+        0 to Pair("127.0.0.1", 4444),
+        1 to Pair("127.0.0.1", 7777),
+        2 to Pair("127.0.0.1", 8888),
+        3 to Pair("127.0.0.1", 9999)
     )
-    val blockNodeMap = mutableMapOf(
-        "0-LP.jpg" to 1,
-        "1-LP.jpg" to 2
-    )
+    val blockNodeMap = LinkedHashMap<String, Int>()
+    blockNodeMap["0-LP.jpg"] = 0
+    blockNodeMap["1-LP.jpg"] = 1
+    blockNodeMap["2-LP.jpg"] = 2
+    blockNodeMap["3-LP.jpg"] = 3
     val coordinator = Coordinator(nodeHostMap, blockNodeMap)
 
     while (true) {
