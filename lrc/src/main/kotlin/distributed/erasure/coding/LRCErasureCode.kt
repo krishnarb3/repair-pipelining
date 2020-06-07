@@ -3,6 +3,13 @@ package distributed.erasure.coding
 import com.backblaze.erasure.ReedSolomon
 import java.io.*
 
+class LRCErasureCode {
+    val rs = ReedSolomon.create(LRCErasureUtil.R, 1)
+    fun encodeParitySingle(shard: ByteArray, output: ByteArray, index: Int, blockSize: Int) {
+        rs.encodeParitySingle(shard, output, index, 0, 0, blockSize)
+    }
+}
+
 fun main() {
     val prefix = "/Users/rb"
 
@@ -62,9 +69,11 @@ fun encodeUsingSingle(inputFileName: String, outputFileSuffix: String) {
             shards[j] = bytesRead
         }
 
+        val output = ByteArray(shards[0].size)
         for (index in (0 until shards.size - 1)) {
-            rs.encodeParitySingle(shards[index], index, 0, 0, blockSize.toInt())
+            rs.encodeParitySingle(shards[index], output, index, 0, 0, blockSize.toInt())
         }
+        shards[shards.size - 1] = output
 
         for (j in 0 until LRCErasureUtil.R + 1) {
             val outputFile = File("${i * (LRCErasureUtil.R+1) + j}-$outputFileSuffix")

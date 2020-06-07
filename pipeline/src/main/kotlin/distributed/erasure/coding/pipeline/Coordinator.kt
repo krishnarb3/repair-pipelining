@@ -2,6 +2,7 @@ package distributed.erasure.coding.pipeline
 
 import distributed.erasure.coding.LRCErasureUtil
 import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
+import distributed.erasure.coding.pipeline.Util.FINAL_BLOCK_ID
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -105,9 +106,10 @@ class Coordinator(
             for (j in 1 until nodesPath.size) {
                 requesterNodeId = nodesPath[j].first
                 val currBlockId = nodesPath[j - 1].second
-                repairStripe(requesterNodeId, senderNodeId, currBlockId, i)
+                repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j-1)
                 senderNodeId = requesterNodeId
             }
+            repairStripe(finalNodeId, senderNodeId, FINAL_BLOCK_ID, i, nodesPath.size - 1)
         }
     }
 
@@ -115,7 +117,8 @@ class Coordinator(
         requesterNodeId: Int,
         senderNodeId: Int,
         blockId: String,
-        stripeIndex: Int
+        stripeIndex: Int,
+        index: Int
     ) {
         val requesterHostPort = nodeHostMap[requesterNodeId]
         if (requesterHostPort == null) {
@@ -129,7 +132,7 @@ class Coordinator(
             )
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$senderNodeId.send.pipeline.to",
-                "$requesterHost $requesterPort $blockId $stripeIndex"
+                "$requesterHost $requesterPort $blockId $stripeIndex $index"
             )
         }
     }

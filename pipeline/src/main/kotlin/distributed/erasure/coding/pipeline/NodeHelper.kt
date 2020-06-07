@@ -1,18 +1,24 @@
 package distributed.erasure.coding.pipeline
 
+import distributed.erasure.coding.LRCErasureCode
 import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
 import distributed.erasure.coding.pipeline.Util.FILE_READ_BUFFER_SIZE
+import distributed.erasure.coding.pipeline.Util.FINAL_BLOCK_ID
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
 import java.io.*
 import java.net.ServerSocket
 import java.net.Socket
 
 class NodeHelper {
-    private var currBlockSendMap = mutableMapOf<String, Pair<DataInputStream, DataOutputStream>>()
+    private var currBlockSendMap = mutableMapOf<String, Pair<DataInputStream?, DataOutputStream>>()
     private var currBlockReceiveMap = mutableMapOf<String, Pair<DataInputStream, DataOutputStream>>()
 
     private val PORT_NUMBER = System.getenv("node.local.port").toInt()
     private val nodeId = System.getenv("node.local.id")
+
+    private val lrcErasureCode = LRCErasureCode()
+    private val serverSocket = ServerSocket(PORT_NUMBER)
+    private var currStripeData = ByteArray(WORD_LENGTH)
 
     fun sendBlock(file: File, host: String, port: Int) {
         var socket: Socket? = null
@@ -38,11 +44,9 @@ class NodeHelper {
     }
 
     fun receiveBlock(message: String) {
-        var serverSocket: ServerSocket? = null
         var socket: Socket? = null
         var socketIn: DataInputStream? = null
         try {
-            serverSocket = ServerSocket(PORT_NUMBER)
             socket = serverSocket.accept()
             socketIn = DataInputStream(BufferedInputStream(socket.getInputStream()))
             while (socketIn.available() > 0) {
@@ -58,31 +62,39 @@ class NodeHelper {
     }
 
     fun sendStripes(message: String) {
-        val (requesterHost, requesterPortString, blockId, stripeIndex) = message.split(" ")
+        val (requesterHost, requesterPortString, blockId, stripeIndex, encodeIndexString) = message.split(" ")
 
+        val encodeIndex = encodeIndexString.toInt()
         var socket: Socket? = null
         var fileIn = currBlockSendMap[blockId]?.first
         var socketOut = currBlockSendMap[blockId]?.second
 
-        // TODO: Change file
-        val file = File(blockId)
-
         try {
 
-            if (socketOut == null || fileIn == null) {
+            if (socketOut == null) {
                 socket = Socket(requesterHost, requesterPortString.toInt())
-                fileIn = DataInputStream(BufferedInputStream(file.inputStream()))
                 socketOut = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
 
-                currBlockSendMap[blockId] = Pair(fileIn, socketOut)
+                if (blockId != FINAL_BLOCK_ID) {
+                    val file = File(blockId)
+                    fileIn = DataInputStream(BufferedInputStream(file.inputStream()))
+                    currBlockSendMap[blockId] = Pair(fileIn, socketOut)
+                } else {
+                    currBlockSendMap[blockId] = Pair(null, socketOut)
+                }
             }
 
             println("Node $nodeId going to send block: $blockId, stripe: $stripeIndex to port $requesterPortString")
 
-            if (fileIn.available() > 0) {
+            if (fileIn != null && fileIn.available() > 0) {
                 val bytes = fileIn.readNBytes(WORD_LENGTH)
-                socketOut.write(bytes)
+                lrcErasureCode.encodeParitySingle(bytes, currStripeData, encodeIndex, WORD_LENGTH)
+                socketOut.write(currStripeData)
+            } else {
+                socketOut.write(currStripeData)
             }
+
+            println("Node $nodeId sent block: $blockId, stripe: $stripeIndex to port $requesterPortString")
         } catch (exception: Exception) {
             exception.printStackTrace()
         } finally {
@@ -96,13 +108,11 @@ class NodeHelper {
 
     fun receiveStripes(message: String) {
         val (senderNodeId, blockId, stripeIndex) = message.split(" ")
-        var serverSocket: ServerSocket? = null
         var socket: Socket? = null
         var socketIn = currBlockReceiveMap[blockId]?.first
         var fileOut = currBlockReceiveMap[blockId]?.second
         try {
             if (socketIn == null || fileOut == null) {
-                serverSocket = ServerSocket(PORT_NUMBER)
                 socket = serverSocket.accept()
                 println("Server $nodeId, opened socket at $PORT_NUMBER for accepting block: $blockId, stripe $stripeIndex")
                 socketIn = DataInputStream(BufferedInputStream(socket.getInputStream()))
@@ -110,9 +120,14 @@ class NodeHelper {
                 fileOut = DataOutputStream(file.outputStream())
                 currBlockReceiveMap[blockId] = Pair(socketIn, fileOut)
             }
+            while (socketIn.available() <= 0) {}
             if (socketIn.available() > 0) {
                 val data = socketIn.readNBytes(WORD_LENGTH)
+                currStripeData = data
                 fileOut.write(data)
+                println("Written data for $stripeIndex")
+            } else {
+                println("No data available for $stripeIndex")
             }
         } catch (exception: Exception) {
             exception.printStackTrace()
