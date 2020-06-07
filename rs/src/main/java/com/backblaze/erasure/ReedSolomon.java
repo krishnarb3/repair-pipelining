@@ -103,7 +103,6 @@ public class ReedSolomon {
     }
 
     public void encodeParitySingle(byte[] shard, byte[] output, int inputIndex, int outputIndex, int offset, int byteCount) {
-        System.arraycopy(shard, dataShardCount, output, 0, parityShardCount);
 
         InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
         codingLoopSingle.codeSomeShards(

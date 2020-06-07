@@ -2,7 +2,6 @@ package distributed.erasure.coding.pipeline
 
 import distributed.erasure.coding.LRCErasureUtil
 import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
-import distributed.erasure.coding.pipeline.Util.FINAL_BLOCK_ID
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -109,7 +108,7 @@ class Coordinator(
                 repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j-1)
                 senderNodeId = requesterNodeId
             }
-            repairStripe(finalNodeId, senderNodeId, FINAL_BLOCK_ID, i, nodesPath.size - 1)
+            repairStripe(finalNodeId, senderNodeId, nodesPath[nodesPath.size - 1].second, i, nodesPath.size - 1)
         }
     }
 
