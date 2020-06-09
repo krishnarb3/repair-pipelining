@@ -4,16 +4,19 @@ import distributed.erasure.coding.LRCErasureCode
 import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
 import distributed.erasure.coding.pipeline.Util.FILE_READ_BUFFER_SIZE
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
+import mu.KotlinLogging
 import java.io.*
 import java.net.ServerSocket
 import java.net.Socket
 
 class NodeHelper {
+    private val logger = KotlinLogging.logger {}
+
     private var currBlockSendMap = mutableMapOf<String, Pair<DataInputStream, DataOutputStream>>()
     private var currBlockReceiveMap = mutableMapOf<String, Pair<DataInputStream, DataOutputStream>>()
 
-    private val PORT_NUMBER = System.getenv("node.local.port").toInt()
-    private val nodeId = System.getenv("node.local.id")
+    private val PORT_NUMBER = System.getProperty("node.local.port").toInt()
+    private val nodeId = System.getProperty("node.local.id")
 
     private val lrcErasureCode = LRCErasureCode()
     private val serverSocket = ServerSocket(PORT_NUMBER)
@@ -34,7 +37,7 @@ class NodeHelper {
                 socketOut.write(bytes)
             }
         } catch (exception: Exception) {
-            System.err.println(exception.message)
+            logger.error(exception.message)
         } finally {
             socketOut?.close()
             fileIn?.close()
@@ -55,8 +58,7 @@ class NodeHelper {
                 }
             }
         } catch (exception: Exception) {
-            exception.printStackTrace()
-
+            logger.error { exception.stackTrace }
         }
     }
 
@@ -78,7 +80,7 @@ class NodeHelper {
                 currBlockSendMap[blockId] = Pair(fileIn, socketOut)
             }
 
-            println("Node $nodeId going to send block: $blockId, stripe: $stripeIndex to port $requesterPortString")
+            logger.debug("Node $nodeId going to send block: $blockId, stripe: $stripeIndex to port $requesterPortString")
 
             if (fileIn.available() > 0) {
                 val bytes = fileIn.readNBytes(WORD_LENGTH)
@@ -88,9 +90,9 @@ class NodeHelper {
                 socketOut.write(currStripeData)
             }
 
-            println("Node $nodeId sent block: $blockId, stripe: $stripeIndex to port $requesterPortString")
+            logger.debug("Node $nodeId sent block: $blockId, stripe: $stripeIndex to port $requesterPortString")
         } catch (exception: Exception) {
-            exception.printStackTrace()
+            logger.error { exception.stackTrace }
         } finally {
             if (stripeIndex.toInt() == BLOCK_SIZE / WORD_LENGTH - 1) {
                 socketOut?.close()
@@ -101,19 +103,19 @@ class NodeHelper {
     }
 
     fun receiveStripes(message: String) {
-        val (senderNodeId, blockId, stripeIndex) = message.split(" ")
+        val (senderNodeId, blockId, stripeIndex, endBlockId) = message.split(" ")
         var socket: Socket? = null
         var socketIn = currBlockReceiveMap[blockId]?.first
         var fileOut = currBlockReceiveMap[blockId]?.second
 
-        println("Receiving stripe $stripeIndex for block $blockId")
+        logger.debug("Receiving stripe $stripeIndex for block $blockId")
 
         try {
             if (socketIn == null || fileOut == null) {
                 socket = serverSocket.accept()
-                println("Server $nodeId, opened socket at $PORT_NUMBER for accepting block: $blockId, stripe $stripeIndex")
+                logger.info("Server $nodeId, opened socket at $PORT_NUMBER for accepting block: $blockId, stripe $stripeIndex")
                 socketIn = DataInputStream(BufferedInputStream(socket.getInputStream()))
-                val file = File("receivedBlock-$nodeId.jpg")
+                val file = File(endBlockId)
                 fileOut = DataOutputStream(FileOutputStream(file, true))
                 currBlockReceiveMap[blockId] = Pair(socketIn, fileOut)
             }
@@ -123,16 +125,18 @@ class NodeHelper {
             if (socketIn.available() > 0) {
                 val data = socketIn.readNBytes(WORD_LENGTH)
                 currStripeData = data
-                fileOut.write(data)
-                println("Written data for $stripeIndex")
+                if (endBlockId != "invalid") {
+                    fileOut.write(data)
+                }
+                logger.debug("Written data for $stripeIndex")
             } else {
-                println("No data available for $stripeIndex")
+                logger.debug("No data available for $stripeIndex")
             }
         } catch (exception: Exception) {
-            exception.printStackTrace()
+            logger.error { exception.stackTrace }
         } finally {
             if (stripeIndex.toInt() == BLOCK_SIZE / WORD_LENGTH - 1) {
-                println("Server $nodeId closed socket at $PORT_NUMBER opened for block $blockId after reaching stripe $stripeIndex")
+                logger.info("Server $nodeId closed socket at $PORT_NUMBER opened for block $blockId after reaching stripe $stripeIndex")
                 socketIn?.close()
                 socket?.close()
                 serverSocket.close()

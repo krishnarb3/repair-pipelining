@@ -3,6 +3,7 @@ package distributed.erasure.coding.pipeline
 import distributed.erasure.coding.LRCErasureUtil
 import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
+import mu.KotlinLogging
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
 import redis.clients.jedis.JedisPoolConfig
@@ -13,14 +14,16 @@ class Coordinator(
     val nodeHostMap: MutableMap<Int, Pair<String, Int>>,
     val blockNodeMap: MutableMap<String, Int>
 ) {
+    private val logger = KotlinLogging.logger {}
+
     private val COORDINATOR_CHANNEL_NAME = "coordinator"
     private val HELPER_CHANNEL_PREFIX = "helper"
 
-    private val JEDIS_POOL_MAX_SIZE = System.getenv("jedis.pool.max.size").toInt()
-    private val COORDINATOR_IP = System.getenv("coordinator.ip")
+    private val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
+    private val COORDINATOR_IP = System.getProperty("coordinator.ip")
     private val REDIS_PORT = 6379
-    private val erasureCode = ErasureCode.valueOf(System.getenv("erasure.code"))
-    private val fetchMethod = System.getenv("fetch.method") ?: "normal"
+    private val erasureCode = ErasureCode.valueOf(System.getProperty("erasure.code"))
+    private val fetchMethod = System.getProperty("fetch.method") ?: "normal"
 
     private var jedis: Jedis
 
@@ -40,12 +43,12 @@ class Coordinator(
             jedisForSubscribe.psubscribe(jedisPubSub, COORDINATOR_CHANNEL_NAME, "$HELPER_CHANNEL_PREFIX.*")
         }.start()
 
-        println("Initialized coordinator")
+        logger.info("Initialized coordinator")
     }
 
     private fun getJedisPubSub() = object : JedisPubSub() {
         override fun onPMessage(pattern: String, channel: String, message: String) {
-            println("Coordinator received channel: $channel, pattern message: $message")
+            logger.debug("Coordinator received channel: $channel, pattern message: $message")
             when (channel) {
                 COORDINATOR_CHANNEL_NAME -> fetchBlock(message)
             }
@@ -71,7 +74,7 @@ class Coordinator(
     ) {
         val requesterHostPort = nodeHostMap[requesterNodeId]
         if (requesterHostPort == null || senderNodeId == -1 || blockId == "") {
-            System.err.println("Error occurred while fetching block")
+            logger.error("Error occurred while fetching block")
             return
         }
         val requesterHost = requesterHostPort.first
@@ -105,10 +108,10 @@ class Coordinator(
             for (j in 1 until nodesPath.size) {
                 requesterNodeId = nodesPath[j].first
                 val currBlockId = nodesPath[j - 1].second
-                repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j-1)
+                repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j-1, "invalid")
                 senderNodeId = requesterNodeId
             }
-            repairStripe(finalNodeId, senderNodeId, nodesPath[nodesPath.size - 1].second, i, nodesPath.size - 1)
+            repairStripe(finalNodeId, senderNodeId, nodesPath[nodesPath.size - 1].second, i, nodesPath.size - 1, blockId)
         }
     }
 
@@ -117,17 +120,18 @@ class Coordinator(
         senderNodeId: Int,
         blockId: String,
         stripeIndex: Int,
-        index: Int
+        index: Int,
+        endBlockId: String
     ) {
         val requesterHostPort = nodeHostMap[requesterNodeId]
         if (requesterHostPort == null) {
-            System.err.println("No node path found for repair pipelining stripe index: $stripeIndex")
+            logger.error("No node path found for repair pipelining stripe index: $stripeIndex")
         } else {
             val requesterHost = requesterHostPort.first
             val requesterPort = requesterHostPort.second
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$requesterNodeId.receive.pipeline.from",
-                "$senderNodeId $blockId $stripeIndex"
+                "$senderNodeId $blockId $stripeIndex $endBlockId"
             )
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$senderNodeId.send.pipeline.to",
@@ -136,25 +140,31 @@ class Coordinator(
         }
     }
 
-    private fun getNodesPathForLRC(blockId: String): List<Pair<Int, String>> {
+    fun getNodesPathForLRC(blockId: String): List<Pair<Int, String>> {
         // Change return list using block -> node mapping
 
         val numBlocks = LRCErasureUtil.N
         val numDataBlocks = LRCErasureUtil.K
         val numGroupBlocks = LRCErasureUtil.R
 
-        val startNodeId = (blockNodeMap.keys.indexOf(blockId) / (numGroupBlocks + 1)) * (numGroupBlocks + 1)
-        val endNodeId =
+        val startBlockIndex = (blockNodeMap.keys.indexOf(blockId) / (numGroupBlocks + 1)) * (numGroupBlocks + 1)
+        val endBlockIndex =
             (blockNodeMap.keys.indexOf(blockId) / (numGroupBlocks + 1)) * (numGroupBlocks + 1) + numGroupBlocks
 
         // TODO: Change this logic
-        println("$startNodeId..$endNodeId")
+        logger.info("Block indices for local parity: $startBlockIndex..$endBlockIndex")
 
-        val res = (startNodeId..endNodeId).filter { it != blockNodeMap[blockId] }.map { nodeId ->
-            Pair(nodeId, blockNodeMap.filterValues { it == nodeId }.keys.first())
+        val res = (startBlockIndex..endBlockIndex).filter { blockIndex ->
+            // Ignore the block we need to fetch
+            blockIndex != blockNodeMap.keys.indexOf(blockId)
+        }.map { blockIndex ->
+            val blockIdsInOrder = blockNodeMap.keys.toList()
+            val currBlockId = blockIdsInOrder[blockIndex]
+            val nodeId = blockNodeMap[currBlockId] ?: -1
+            Pair(nodeId, currBlockId)
         }.toList()
 
-        println(res)
+        logger.debug("Nodes path: $res")
         return res
     }
 
@@ -163,18 +173,25 @@ class Coordinator(
     }
 }
 
-fun main() {
+fun main(args: Array<String>) {
     val nodeHostMap = mutableMapOf(
         0 to Pair("127.0.0.1", 4444),
         1 to Pair("127.0.0.1", 7777),
         2 to Pair("127.0.0.1", 8888),
         3 to Pair("127.0.0.1", 9999)
     )
+
+    // Blocks are stored in order
     val blockNodeMap = LinkedHashMap<String, Int>()
     blockNodeMap["0-LP.jpg"] = 0
     blockNodeMap["1-LP.jpg"] = 1
     blockNodeMap["2-LP.jpg"] = 2
     blockNodeMap["3-LP.jpg"] = 3
+
+    blockNodeMap["4-LP.jpg"] = 0
+    blockNodeMap["5-LP.jpg"] = 1
+    blockNodeMap["6-LP.jpg"] = 2
+    blockNodeMap["7-LP.jpg"] = 3
     val coordinator = Coordinator(nodeHostMap, blockNodeMap)
 
     while (true) {
@@ -182,5 +199,4 @@ fun main() {
         coordinator.latch = latch
         latch.await()
     }
-
 }

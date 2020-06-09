@@ -1,24 +1,21 @@
 package distributed.erasure.coding.pipeline
 
+import mu.KotlinLogging
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
 import redis.clients.jedis.JedisPoolConfig
 import redis.clients.jedis.JedisPubSub
 import java.io.*
-import java.net.ServerSocket
-import java.net.Socket
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicInteger
 
 class NodeImpl(val nodeHelper: NodeHelper) : Node {
+    private val logger = KotlinLogging.logger {}
 
-    private val BLOCK_SIZE = 1024
-
-    private val LOCAL_IP = System.getenv("node.local.ip")
-    private val JEDIS_POOL_MAX_SIZE = System.getenv("jedis.pool.max.size").toInt()
+    private val LOCAL_IP = System.getProperty("node.local.ip")
+    private val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
     private val COORDINATOR_CHANNEL_NAME = "coordinator"
     private val HELPER_CHANNEL_PREFIX = "helper"
-    private val nodeId = System.getenv("node.local.id")
+    private val nodeId = System.getProperty("node.local.id")
 
     private var jedis: Jedis
     lateinit var _latch: CountDownLatch
@@ -34,7 +31,7 @@ class NodeImpl(val nodeHelper: NodeHelper) : Node {
             jedisForSubscribe.psubscribe(jedisPubSub, "$HELPER_CHANNEL_PREFIX.$nodeId.*")
         }.start()
 
-        println("Node $nodeId initialized")
+        logger.info("Node $nodeId initialized")
     }
 
     override fun fetchBlock(blockId: String) {
@@ -69,16 +66,10 @@ class NodeImpl(val nodeHelper: NodeHelper) : Node {
 fun main() {
     val nodeHelper = NodeHelper()
     val node: Node = NodeImpl(nodeHelper)
-    val fetchCounter = AtomicInteger(0)
 
     while (true) {
         val latch = CountDownLatch(1)
         node.setLatch(latch)
-        if (System.getenv("node.local.id").toInt() == 3 && fetchCounter.get() == 0) {
-            node.fetchBlock("3-LP.jpg")
-            fetchCounter.incrementAndGet()
-        }
         latch.await()
     }
-
 }

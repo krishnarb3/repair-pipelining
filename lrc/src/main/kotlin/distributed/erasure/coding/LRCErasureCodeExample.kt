@@ -6,14 +6,22 @@ import java.util.*
 
 
 fun main() {
-    val prefix = "/Users/rb"
+    val prefix = "."
 
-    val inputFileName = "$prefix/Downloads/LP-block.jpg"
+    val inputFileName = "$prefix/LP-block.jpg"
     val encodeOutputSuffix = "LP.jpg"
-    val outputFileName = "$prefix/Desktop/LP-copy.jpg"
+    val outputFileName = "$prefix/LP-copy.jpg"
 
-//    encode(inputFileName, encodeOutputSuffix)
-//    encodeUsingSingle(inputFileName, encodeOutputSuffix)
+    val scanner = Scanner(System.`in`)
+    println("Please enter option: 1. Encode using all inputs 2. Encode using one-by-one inputs 3. Skip encode")
+
+    val option = scanner.nextInt()
+    when (option) {
+        1 -> encode(inputFileName, encodeOutputSuffix)
+        2 -> encodeUsingSingle(inputFileName, encodeOutputSuffix)
+        3 -> {}
+    }
+
     decode(inputFileName, outputFileName, encodeOutputSuffix, listOf(2))
 
     println("Done")
