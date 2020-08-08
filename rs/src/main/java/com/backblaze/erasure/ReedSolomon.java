@@ -6,6 +6,8 @@
 
 package com.backblaze.erasure;
 
+import java.util.Arrays;
+
 /**
  * Reed-Solomon Coding over 8-bit values.
  */
@@ -293,9 +295,7 @@ public class ReedSolomon {
         // All of the shard buffers should be the same length.
         int shardLength = shards[0].length;
         for (int i = 1; i < shards.length; i++) {
-            if (shards[i].length != shardLength) {
-                throw new IllegalArgumentException("Shards are different sizes");
-            }
+            shards[i] = Arrays.copyOf(shards[i], shardLength);
         }
 
         // The offset and byteCount must be non-negative and fit in the buffers.

@@ -138,8 +138,6 @@ class NodeHelper {
             if (stripeIndex.toInt() == BLOCK_SIZE / WORD_LENGTH - 1) {
                 logger.info("Server $nodeId closed socket at $PORT_NUMBER opened for block $blockId after reaching stripe $stripeIndex")
                 socketIn?.close()
-                socket?.close()
-                serverSocket.close()
                 fileOut?.close()
             }
         }
