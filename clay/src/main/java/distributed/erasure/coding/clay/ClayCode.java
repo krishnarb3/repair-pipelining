@@ -14,21 +14,21 @@ public class ClayCode {
     public static final int NUM_DATA_UNITS = 4;
     public static final int NUM_PARITY_UNITS = 2;
     public static final int BLOCK_SIZE = 8704;
+    public static int[] erasedIndexes = new int[] { 4, 5 };
     private static boolean startBufferWithZero = true;
 
-    public static void main(String[] args) throws Exception {
-        int[] erasedIndexes = new int[] { 4, 5 };
-        ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil = new ClayCodeErasureDecodingStep.ClayCodeUtil(
-                erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
-        );
+    public static ReedSolomon pairwiseDecoder = ReedSolomon.create(2, 2);
+    public static ReedSolomon rsRawDecoder = ReedSolomon.create(NUM_DATA_UNITS, NUM_PARITY_UNITS);
 
-        int dataLength = (NUM_DATA_UNITS) * clayCodeUtil.getSubPacketSize();
-        int inputsLength = (NUM_DATA_UNITS + NUM_PARITY_UNITS) * clayCodeUtil.getSubPacketSize();
-        int outputsLength = (erasedIndexes.length)  * clayCodeUtil.getSubPacketSize();
+    public static ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil = new ClayCodeErasureDecodingStep.ClayCodeUtil(
+            erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
+    );
 
-
+    public static ECBlock[] getInputs() throws Exception {
         File inputFile = new File("LP-block.jpg");
         DataInputStream dataInputStream = new DataInputStream(new FileInputStream(inputFile));
+
+        int inputsLength = (NUM_DATA_UNITS + NUM_PARITY_UNITS) * clayCodeUtil.getSubPacketSize();
 
         ECBlock[] inputs = new ECBlock[(NUM_DATA_UNITS + NUM_PARITY_UNITS) * clayCodeUtil.getSubPacketSize()];
 
@@ -47,6 +47,10 @@ public class ClayCode {
             counter = counter % (NUM_DATA_UNITS + NUM_PARITY_UNITS);
         }
 
+        return inputs;
+    }
+
+    public static ECBlock[] getTestInputs(ECBlock[] inputs) throws Exception {
         ECBlock[] outputs = new ECBlock[erasedIndexes.length * clayCodeUtil.getSubPacketSize()];
         for (int i = 0; i < outputs.length; i++) {
             ByteBuffer buffer = ByteBuffer.allocate(BLOCK_SIZE);
@@ -54,11 +58,8 @@ public class ClayCode {
             outputs[i] = new ECBlock(chunk, true, true);
         }
 
-        ReedSolomon pairwiseDecoder = ReedSolomon.create(2, 2);
-        ReedSolomon rsRawDecoder = ReedSolomon.create(NUM_DATA_UNITS, NUM_PARITY_UNITS);
-
         ClayCodeErasureDecodingStep clayCodeErasureDecodingStep = new ClayCodeErasureDecodingStep(
-            inputs, erasedIndexes, outputs, pairwiseDecoder, rsRawDecoder
+                erasedIndexes, pairwiseDecoder, rsRawDecoder
         );
 
         ECChunk[] inputChunks = getChunks(inputs);
@@ -67,29 +68,31 @@ public class ClayCode {
 
         // Test
 
-        int[] testErasedIndexesArray = new int[] { 1, 2 };
+        int[] testErasedIndexesArray = new int[] { 1 };
         List<Integer> testErasedIndexes = Arrays.stream(testErasedIndexesArray).boxed().collect(Collectors.toList());
         ECBlock[] testInputs = getTestInputs(inputChunks, outputChunks, testErasedIndexes, BLOCK_SIZE);
-        ECBlock[] testOutputs = getTestOutputs(outputs, BLOCK_SIZE);
+        return testInputs;
+    }
 
+    public static void main(String[] args) throws Exception {
+        int[] testErasedIndexesArray = new int[] { 1 };
+        List<Integer> testErasedIndexes = Arrays.stream(testErasedIndexesArray).boxed().collect(Collectors.toList());
         ClayCodeErasureDecodingStep testClayCodeErasureDecodingStep = new ClayCodeErasureDecodingStep(
-                testInputs, testErasedIndexesArray, testOutputs, pairwiseDecoder, rsRawDecoder
+                testErasedIndexesArray, pairwiseDecoder, rsRawDecoder
         );
+
+        ECBlock[] inputs = getInputs();
+        ECBlock[] testInputs = getTestInputs(inputs);
+        ECBlock[] testOutputs = getTestOutputs(testErasedIndexesArray.length * clayCodeUtil.getSubPacketSize(), BLOCK_SIZE);
 
         ECChunk[] testInputChunks = getChunks(testInputs);
         ECChunk[] testOutputChunks = getChunks(testOutputs);
         testClayCodeErasureDecodingStep.performCoding(testInputChunks, testOutputChunks);
 
-        int k = 0;
-        for (Integer i : testErasedIndexes) {
-            ECChunk expectedChunk = inputChunks[i];
-            ECChunk actualChunk = testOutputChunks[k++];
-            System.out.println("Checking");
-        }
-
+        System.out.println("Checking");
     }
 
-    private static ECChunk[] getChunks(ECBlock[] blocks) {
+    public static ECChunk[] getChunks(ECBlock[] blocks) {
         ECChunk[] result = new ECChunk[blocks.length];
         for (int i = 0; i < blocks.length; i++) {
             ECBlock block = blocks[i];
@@ -100,7 +103,7 @@ public class ClayCode {
         return result;
     }
 
-    private static ECBlock[] getTestInputs(ECChunk[] inputs, ECChunk[] outputs, List<Integer> erasedIndexes, int bufSize) {
+    public static ECBlock[] getTestInputs(ECChunk[] inputs, ECChunk[] outputs, List<Integer> erasedIndexes, int bufSize) {
         ECBlock[] testInputs = new ECBlock[inputs.length];
         int k = 0;
         for (int i = 0; i < inputs.length; i++) {
@@ -122,17 +125,17 @@ public class ClayCode {
         return testInputs;
     }
 
-    private static ECBlock[] getTestOutputs(ECBlock[] outputs, int bufSize) {
-        ECBlock[] testInputs = new ECBlock[outputs.length];
-        for (int i = 0; i < outputs.length; i++) {
+    public static ECBlock[] getTestOutputs(int length, int bufSize) {
+        ECBlock[] testOutputs = new ECBlock[length];
+        for (int i = 0; i < length; i++) {
             ByteBuffer buffer = ByteBuffer.allocate(bufSize);
             ECChunk chunk = new ECChunk(buffer);
-            testInputs[i] = new ECBlock(chunk, false, true);
+            testOutputs[i] = new ECBlock(chunk, false, true);
         }
-        return testInputs;
+        return testOutputs;
     }
 
-    protected static ByteBuffer allocateOutputBuffer(int bufferLen, byte[] data) {
+    public static ByteBuffer allocateOutputBuffer(int bufferLen, byte[] data) {
         /*
          * When startBufferWithZero, will prepare a buffer as:---------------
          * otherwise, the buffer will be like:             ___TO--BE--WRITTEN___,

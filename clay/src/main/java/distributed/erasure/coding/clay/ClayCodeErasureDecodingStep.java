@@ -25,8 +25,6 @@ import java.util.*;
 
 public class ClayCodeErasureDecodingStep {
 
-    private ECBlock[] inputBlocks;
-    private ECBlock[] outputBlocks;
     private int[] erasedIndexes;
     private ReedSolomon pairWiseDecoder;
     private ReedSolomon rsRawDecoder;
@@ -37,31 +35,17 @@ public class ClayCodeErasureDecodingStep {
     /**
      * Basic constructor with necessary info
      *
-     * @param inputs          Blocks to encode
-     * @param outputs         Blocks to decode
      * @param pairWiseDecoder Decoder for the pair wise transforms
      * @param rsRawDecoder    Decoder for each layer
      */
-    public ClayCodeErasureDecodingStep(ECBlock[] inputs,
-                                       int[] erasedIndexes,
-                                       ECBlock[] outputs,
+    public ClayCodeErasureDecodingStep(int[] erasedIndexes,
                                        ReedSolomon pairWiseDecoder,
                                        ReedSolomon rsRawDecoder) {
-        this.inputBlocks = inputs;
         this.erasedIndexes = erasedIndexes;
-        this.outputBlocks = outputs;
         this.rsRawDecoder = rsRawDecoder;
         this.pairWiseDecoder = pairWiseDecoder;
 
         this.util = new ClayCodeUtil(erasedIndexes, rsRawDecoder.getDataShardCount(), rsRawDecoder.getParityShardCount());
-    }
-
-    public ECBlock[] getInputBlocks() {
-        return inputBlocks;
-    }
-
-    public ECBlock[] getOutputBlocks() {
-        return outputBlocks;
     }
 
     public void performCoding(ECChunk[] inputChunks, ECChunk[] outputChunks) throws IOException {
@@ -159,6 +143,7 @@ public class ClayCodeErasureDecodingStep {
     helper planes are the ones with hole dot pairs
     */
         int[] helperIndexes = util.getHelperPlanesIndexes(erasedIndex);
+        System.out.println(Arrays.toString(helperIndexes));
         ByteBuffer[][] helperCoupledPlanes = new ByteBuffer[helperIndexes.length][inputs[0].length];
 
         getHelperPlanes(inputs, helperCoupledPlanes, erasedIndex);
@@ -230,6 +215,62 @@ public class ClayCodeErasureDecodingStep {
 
     }
 
+    public void doDecodeSingle(ByteBuffer[][] helperCoupledPlanes, int[] helperIndexes, ByteBuffer[][] outputs,
+                                int erasedIndex, int bufSize, boolean isDirect) throws IOException {
+        /*
+        get the indices of all the helper planes
+        helper planes are the ones with hole dot pairs
+        */
+
+        ByteBuffer[] tmpOutputs = new ByteBuffer[2];
+
+        for (int p = 0; p < 2; ++p)
+            tmpOutputs[p] = ClayCodeUtil.allocateByteBuffer(isDirect, bufSize);
+
+
+        int y = util.getNodeCoordinates(erasedIndex)[1];
+        int[] erasedDecoupledNodes = new int[util.q];
+
+    /*
+    the couples can not be found for any of the nodes in the same column as the erased node
+    erasedDecoupledNodes is a list of all those nodes
+    */
+        for (int x = 0; x < util.q ; x++) {
+            erasedDecoupledNodes[x] = util.getNodeIndex(x,y);
+        }
+
+        for (int i=0; i<helperIndexes.length; ++i){
+
+            int z = helperIndexes[i];
+            ByteBuffer[] helperDecoupledPlane = new ByteBuffer[util.q * util.t];
+
+            getDecoupledHelperPlane(helperCoupledPlanes, helperDecoupledPlane, i, helperIndexes, erasedIndex, bufSize, isDirect);
+            decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect);
+
+            //after getting all the values in decoupled plane, find out q erased values
+            for (int x = 0; x <util.q; x++) {
+                int nodeIndex = util.getNodeIndex(x, y);
+
+                if (nodeIndex == erasedIndex) {
+                    outputs[z][0].put(helperDecoupledPlane[nodeIndex]);
+                } else {
+
+                    int coupledZIndex = util.getCouplePlaneIndex(new int[]{x, y}, z);
+
+                    getPairWiseCouple(new ByteBuffer[]{null, helperCoupledPlanes[i][nodeIndex], null, helperDecoupledPlane[nodeIndex]}, tmpOutputs, bufSize);
+
+                    outputs[coupledZIndex][0].put(tmpOutputs[0]);
+
+                    // clear the temp- buffers for reuse
+                    for (int p = 0; p < 2; ++p)
+                        tmpOutputs[p].clear();
+
+                }
+
+            }
+        }
+    }
+
 
     /**
      * Find the fill the helper planes corresponding to the erasedIndex from the inputs
@@ -244,9 +285,9 @@ public class ClayCodeErasureDecodingStep {
             helperPlanes[i] = inputs[helperIndexes[i]];
         }
 
+        System.out.println("getHelperPlanes completed");
+
     }
-
-
 
 
     /**
@@ -386,6 +427,8 @@ public class ClayCodeErasureDecodingStep {
                                          int bufSize, boolean isDirect )
             throws IOException {
 
+        System.out.println("Get decoupled helper plane");
+
         int z = helperIndexes[helperPlaneIndex];
         int[] z_vec = util.getZVector(z);
 
@@ -403,6 +446,7 @@ public class ClayCodeErasureDecodingStep {
             if(coordinates[1]!=erasedCoordinates[1]){
 
                 if (z_vec[coordinates[1]] == coordinates[0]){
+                    System.out.println("Helper plane [" + helperPlaneIndex + "][" + i + "]");
                     temp[i] = helperPlanes[helperPlaneIndex][i];
                 } else {
 
@@ -417,6 +461,8 @@ public class ClayCodeErasureDecodingStep {
                     }
 
                     int coupleCoordinates = util.getNodeIndex(z_vec[coordinates[1]], coordinates[1]);
+
+                    System.out.println("Helper plane [" + coupleHelperPlaneIndex + "][" + coupleCoordinates + "]");
 
                     getPairWiseCouple(new ByteBuffer[]{helperPlanes[helperPlaneIndex][i],
                                     helperPlanes[coupleHelperPlaneIndex][coupleCoordinates], null, null},
@@ -585,7 +631,7 @@ public class ClayCodeErasureDecodingStep {
             outputs[i].position(outputPos[i]);
         }
 
-        System.out.println("getPairwise couple completed");
+        // System.out.println("getPairwise couple completed");
 
     }
 
@@ -611,7 +657,7 @@ public class ClayCodeErasureDecodingStep {
          * @param numDataUnits
          * @param numParityUnits
          */
-        ClayCodeUtil(int[] erasedIndexes, int numDataUnits, int numParityUnits) {
+        public ClayCodeUtil(int[] erasedIndexes, int numDataUnits, int numParityUnits) {
             this.q = numParityUnits;
             this.t = (numParityUnits + numDataUnits) / numParityUnits;
             this.erasedIndexes = erasedIndexes;

@@ -95,6 +95,7 @@ class Coordinator(
     ) {
         val nodesPath = when (erasureCode) {
             ErasureCode.LRC -> getNodesPathForLRC(blockId)
+            ErasureCode.CLAY -> getNodesPathForClay(blockId)
             else -> getNodesPath(blockId)
         }
 
@@ -167,6 +168,10 @@ class Coordinator(
         logger.debug("Nodes path: $res")
         return res
     }
+
+    fun getNodesPathForClay(blockId: String): List<Pair<Int, String>> {
+        return listOf()
+1    }
 
     private fun getNodesPath(blockId: String): List<Pair<Int, String>> {
         return listOf()

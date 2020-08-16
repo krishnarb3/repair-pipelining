@@ -27,4 +27,5 @@ target
 build
 
 # Output folder
-out/**
+**/out
+out/

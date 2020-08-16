@@ -15,6 +15,7 @@ repositories {
 dependencies {
     implementation(kotlin("stdlib-jdk8"))
     compile(project(":lrc"))
+    compile(project(":clay"))
     compile(group = "redis.clients", name = "jedis", version = "3.2.0")
     compile(group = "io.github.microutils", name = "kotlin-logging", version = "1.7.9")
     compile(group = "org.slf4j", name = "slf4j-simple", version = "1.7.29")
