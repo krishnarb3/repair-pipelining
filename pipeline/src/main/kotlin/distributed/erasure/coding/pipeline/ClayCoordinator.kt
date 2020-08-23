@@ -2,24 +2,30 @@ package distributed.erasure.coding.pipeline
 
 import com.backblaze.erasure.ReedSolomon
 import distributed.erasure.coding.clay.ClayCode
-import distributed.erasure.coding.clay.ClayCode.allocateOutputBuffer
-import distributed.erasure.coding.clay.ClayCode.getChunks
 import distributed.erasure.coding.clay.ClayCodeErasureDecodingStep
+import distributed.erasure.coding.clay.ClayCodeHelper
 import distributed.erasure.coding.clay.ECBlock
-import distributed.erasure.coding.clay.ECChunk
-import java.io.DataInputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.IOException
+import distributed.erasure.coding.pipeline.Util.CLAY_BLOCK_SIZE
+import distributed.erasure.coding.pipeline.Util.NUM_DATA_UNITS
+import distributed.erasure.coding.pipeline.Util.NUM_PARITY_UNITS
+import distributed.erasure.coding.pipeline.Util.NUM_TOTAL_UNITS
+import distributed.erasure.coding.pipeline.Util.SUBPACKET_SIZE
 import java.nio.ByteBuffer
 
-class ClayCoordinator {
-    val NUM_DATA_UNITS = 4
-    val NUM_PARITY_UNITS = 2
-    val SUBPACKET_SIZE = 8
-    val BLOCK_SIZE = 8704
+class ClayCoordinator(
+    nodeHostMap: MutableMap<Int, Pair<String, Int>>,
+    blockNodeMap: MutableMap<String, Int>,
+    val blockIndexMap: MutableMap<String, Int>
+) : Coordinator(nodeHostMap, blockNodeMap) {
 
-    var inputs = Array<ECBlock>((NUM_DATA_UNITS + NUM_PARITY_UNITS) * SUBPACKET_SIZE) { ECBlock(false, false) }
+    var inputs = Array((NUM_DATA_UNITS + NUM_PARITY_UNITS) * SUBPACKET_SIZE) {
+        ECBlock(false, false)
+    }
+
+    override fun fetchBlockUsingPipelining(finalNodeId: Int, blockId: String) {
+        val erasedIndex = blockIndexMap[blockId] ?: throw Exception("Index not found for block")
+        fetchBlockUsingPipelining(finalNodeId, erasedIndex, blockId)
+    }
 
     fun fetchBlockUsingPipelining(finalNodeId: Int, erasedIndex: Int, blockId: String) {
         val erasedIndexes = intArrayOf(erasedIndex)
@@ -28,90 +34,38 @@ class ClayCoordinator {
             erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
         )
         val originalInputs = ClayCode.getInputs()
-        inputs = ClayCode.getTestInputs(originalInputs)
+        val originalOutputs = ClayCode.getOutputs()
+        val encodedResult = ClayCode.encode(originalInputs, originalOutputs)
 
-        val outputsArray = Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(BLOCK_SIZE)) } }
-        getHelperPlanesAndDecode(util, blockId, outputsArray, erasedIndex, BLOCK_SIZE, isDirect)
+        inputs = ClayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+
+        val outputsArray =
+            Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }
+
+        val clayCodeHelper = ClayCodeHelper(
+            NUM_DATA_UNITS, NUM_PARITY_UNITS, SUBPACKET_SIZE, inputs
+        )
+        clayCodeHelper.getHelperPlanesAndDecode(util, blockId, outputsArray, erasedIndex, CLAY_BLOCK_SIZE, isDirect)
 
         println("Completed")
-    }
-
-    private fun getInputsFromNodes(
-        util: ClayCodeErasureDecodingStep.ClayCodeUtil,
-        blockId: String,
-        subpacketIndex: Int,
-        erasedIndex: Int,
-        bufSize: Int
-    ): Array<ByteArray> {
-        val helperIndexes = util.getHelperPlanesIndexes(erasedIndex)
-        val helperPlanes = Array(helperIndexes.size) { ByteArray(bufSize) }
-
-        for (i in helperIndexes.indices) {
-//            helperPlanes[i] = getInput(blockId, subpacketIndex, helperIndexes[i])
-        }
-
-        return helperPlanes
-    }
-
-    private fun getInput(blockId: String, subpacketIndex: Int, index: Int): Array<ByteBuffer> {
-        val newIn = Array(SUBPACKET_SIZE) { Array(NUM_DATA_UNITS + NUM_PARITY_UNITS) { ByteBuffer.allocate(BLOCK_SIZE) } }
-        for (i in 0 until SUBPACKET_SIZE) {
-            for (j in 0 until NUM_DATA_UNITS + NUM_PARITY_UNITS) {
-                newIn[i][j] = inputs[i * (NUM_DATA_UNITS + NUM_PARITY_UNITS) + j].chunk.buffer
-            }
-        }
-        val inputs = newIn[index]
-        return inputs
-    }
-
-    private fun getNodesForBlock(blockId: String): List<Pair<Int, String>> {
-        TODO("Get nodes for blockId")
-    }
-
-    @Throws(IOException::class)
-    private fun getHelperPlanesAndDecode(
-        util: ClayCodeErasureDecodingStep.ClayCodeUtil,
-        blockId: String,
-        outputs: Array<Array<ByteBuffer>>,
-        erasedIndex: Int, bufSize: Int, isDirect: Boolean
-    ) {
-        val helperIndexes = util.getHelperPlanesIndexes(erasedIndex)
-        val helperCoupledPlanes = Array(helperIndexes.size) {
-            Array(NUM_DATA_UNITS + NUM_PARITY_UNITS) { ByteBuffer.allocate(bufSize) }
-        }
-
-        val pairWiseDecoder = ReedSolomon.create(2, 2)
-        val rsRawDecoder = ReedSolomon.create(NUM_DATA_UNITS, NUM_PARITY_UNITS)
-        val clayCodeErasureDecodingStep = ClayCodeErasureDecodingStep(
-            intArrayOf(erasedIndex), pairWiseDecoder, rsRawDecoder
-        )
-        getHelperPlanes(util, blockId, helperCoupledPlanes, erasedIndex)
-        clayCodeErasureDecodingStep.doDecodeSingle(
-            helperCoupledPlanes,
-            helperIndexes,
-            outputs,
-            erasedIndex,
-            bufSize,
-            isDirect
-        )
-    }
-
-    private fun getHelperPlanes(
-        util: ClayCodeErasureDecodingStep.ClayCodeUtil,
-        blockId: String,
-        helperCoupledPlanes: Array<Array<ByteBuffer>>,
-        erasedIndex: Int
-    ) {
-        val helperIndexes = util.getHelperPlanesIndexes(erasedIndex)
-
-        for (i in helperIndexes.indices) {
-            helperCoupledPlanes[i] = getInput(blockId, i, helperIndexes[i])
-        }
     }
 }
 
 fun main() {
-    val coordinator = ClayCoordinator()
-    val finalNodeId = 3
+    val nodeHostMap = mutableMapOf(
+        0 to Pair("127.0.0.1", 1111),
+        1 to Pair("127.0.0.1", 2222),
+        2 to Pair("127.0.0.1", 3333),
+        3 to Pair("127.0.0.1", 4444),
+        4 to Pair("127.0.0.1", 5555),
+        5 to Pair("127.0.0.1", 6666)
+    )
+    val blockNodeMap = LinkedHashMap<String, Int>()
+    val blockIndexMap = mutableMapOf<String, Int>()
+    (0..NUM_TOTAL_UNITS * SUBPACKET_SIZE).forEach {
+        blockNodeMap["$it-LP.jpg"] = it % NUM_TOTAL_UNITS
+        blockNodeMap["$it-LP.jpg"] = it
+    }
+    val coordinator = ClayCoordinator(nodeHostMap, blockNodeMap, blockIndexMap)
     coordinator.fetchBlockUsingPipelining(3, 1, "dummy")
 }

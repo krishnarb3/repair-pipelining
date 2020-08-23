@@ -10,7 +10,7 @@ import redis.clients.jedis.JedisPoolConfig
 import redis.clients.jedis.JedisPubSub
 import java.util.concurrent.CountDownLatch
 
-class Coordinator(
+open class Coordinator(
     val nodeHostMap: MutableMap<Int, Pair<String, Int>>,
     val blockNodeMap: MutableMap<String, Int>
 ) {
@@ -19,11 +19,11 @@ class Coordinator(
     private val COORDINATOR_CHANNEL_NAME = "coordinator"
     private val HELPER_CHANNEL_PREFIX = "helper"
 
-    private val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
-    private val COORDINATOR_IP = System.getProperty("coordinator.ip")
-    private val REDIS_PORT = 6379
-    private val erasureCode = ErasureCode.valueOf(System.getProperty("erasure.code"))
-    private val fetchMethod = System.getProperty("fetch.method") ?: "normal"
+    val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
+    val COORDINATOR_IP = System.getProperty("coordinator.ip")
+    val REDIS_PORT = 6379
+    val erasureCode = ErasureCode.valueOf(System.getProperty("erasure.code"))
+    val fetchMethod = System.getProperty("fetch.method") ?: "normal"
 
     private var jedis: Jedis
 
@@ -89,7 +89,7 @@ class Coordinator(
         )
     }
 
-    private fun fetchBlockUsingPipelining(
+    open fun fetchBlockUsingPipelining(
         finalNodeId: Int,
         blockId: String
     ) {
@@ -109,10 +109,17 @@ class Coordinator(
             for (j in 1 until nodesPath.size) {
                 requesterNodeId = nodesPath[j].first
                 val currBlockId = nodesPath[j - 1].second
-                repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j-1, "invalid")
+                repairStripe(requesterNodeId, senderNodeId, currBlockId, i, j - 1, "invalid")
                 senderNodeId = requesterNodeId
             }
-            repairStripe(finalNodeId, senderNodeId, nodesPath[nodesPath.size - 1].second, i, nodesPath.size - 1, blockId)
+            repairStripe(
+                finalNodeId,
+                senderNodeId,
+                nodesPath[nodesPath.size - 1].second,
+                i,
+                nodesPath.size - 1,
+                blockId
+            )
         }
     }
 
@@ -171,7 +178,7 @@ class Coordinator(
 
     fun getNodesPathForClay(blockId: String): List<Pair<Int, String>> {
         return listOf()
-1    }
+    }
 
     private fun getNodesPath(blockId: String): List<Pair<Int, String>> {
         return listOf()
