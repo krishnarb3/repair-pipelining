@@ -7,6 +7,10 @@
 package com.backblaze.erasure;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static java.util.Arrays.stream;
 
 /**
  * Reed-Solomon Coding over 8-bit values.
@@ -282,10 +286,10 @@ public class ReedSolomon {
                 offset, byteCount);
     }
 
-    public void decodeMissingNew(byte [] [] shards,
-                              boolean [] shardPresent,
-                              final int offset,
-                              final int byteCount) {
+    public void decodeMissingSingle(byte [] [] shards,
+                                    boolean [] shardPresent,
+                                    final int offset,
+                                    final int byteCount) {
         Matrix subMatrix = new Matrix(dataShardCount, dataShardCount);
         byte [] [] subShards = new byte [dataShardCount] [];
 
@@ -327,61 +331,36 @@ public class ReedSolomon {
                 outputCount += 1;
             }
         }
-
-        // TODO: Change this
-        if (erasedIndexes[0] == 4 && erasedIndexes[1] == 5) {
-            InputOutputByteTableCodingLoop codingLoop = new InputOutputByteTableCodingLoop();
-            codingLoop.codeSomeShards(
-                    matrixRows,
-                    subShards, dataShardCount,
-                    outputs, outputCount,
-                    offset, byteCount);
-            outputCount = 0;
-            for (int iShard = dataShardCount; iShard < totalShardCount; iShard++) {
-                if (!shardPresent[iShard]) {
-                    outputs[outputCount] = shards[iShard];
-                    matrixRows[outputCount] = parityRows[iShard - dataShardCount];
-                    outputCount += 1;
-                }
+        for (int i = 0; i < dataShardCount; i++) {
+            for (int j = 0; j < outputs.length; j++) {
+                InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
+                codingLoopSingle.codeSomeShards(
+                        matrixRows,
+                        subShards[i], i, outputs[j], j,
+                        offset, byteCount
+                );
             }
-            codingLoop.codeSomeShards(
-                    matrixRows,
-                    shards, dataShardCount,
-                    outputs, outputCount,
-                    offset, byteCount);
-        } else {
-            for (int i = 0; i < dataShardCount; i++) {
-                for (int j = 0; j < outputs.length; j++) {
-                    InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
-                    codingLoopSingle.codeSomeShards(
-                            matrixRows,
-                            subShards[i], i, outputs[j], j,
-                            offset, byteCount
-                    );
-                }
-            }
-            outputCount = 0;
-            for (int iShard = dataShardCount; iShard < totalShardCount; iShard++) {
-                if (!shardPresent[iShard]) {
-                    outputs[outputCount] = shards[iShard];
-                    matrixRows[outputCount] = parityRows[iShard - dataShardCount];
-                    outputCount += 1;
-                }
-            }
-//            codingLoop.codeSomeShards(matrixRows, shards, dataShardCount, outputs, outputCount, offset, byteCount);
-//            for (int i = 0; i < dataShardCount; i++) {
-//                for (int j = 0; j < outputs.length; j++) {
-//                    InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
-//                    codingLoopSingle.codeSomeShards(
-//                            matrixRows,
-//                            shards[i], i,
-//                            outputs[j], 0,
-//                            offset, byteCount
-//                    );
-//                }
-//            }
-            System.out.println("CodingLoopSingle done");
         }
+        outputCount = 0;
+        for (int iShard = dataShardCount; iShard < totalShardCount; iShard++) {
+            if (!shardPresent[iShard]) {
+                outputs[outputCount] = shards[iShard];
+                matrixRows[outputCount] = parityRows[iShard - dataShardCount];
+                outputCount += 1;
+            }
+        }
+        for (int i = 0; i < dataShardCount; i++) {
+            for (int j = 0; j < outputCount; j++) {
+                InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
+                codingLoopSingle.codeSomeShards(
+                        matrixRows,
+                        shards[i], i,
+                        outputs[j], j,
+                        offset, byteCount
+                );
+            }
+        }
+        System.out.println("CodingLoopSingle done");
     }
 
     /**

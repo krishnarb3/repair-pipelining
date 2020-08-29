@@ -1,6 +1,5 @@
 package distributed.erasure.coding.pipeline
 
-import com.backblaze.erasure.ReedSolomon
 import distributed.erasure.coding.clay.ClayCode
 import distributed.erasure.coding.clay.ClayCodeErasureDecodingStep
 import distributed.erasure.coding.clay.ClayCodeHelper
@@ -33,11 +32,13 @@ class ClayCoordinator(
         val util = ClayCodeErasureDecodingStep.ClayCodeUtil(
             erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
         )
-        val originalInputs = ClayCode.getInputs()
-        val originalOutputs = ClayCode.getOutputs()
-        val encodedResult = ClayCode.encode(originalInputs, originalOutputs)
+        val parityIndexes = (NUM_DATA_UNITS until NUM_TOTAL_UNITS).toList().toIntArray()
+        var clayCode = ClayCode(NUM_DATA_UNITS, NUM_PARITY_UNITS, CLAY_BLOCK_SIZE, parityIndexes)
+        val originalInputs = clayCode.getInputs()
+        val originalOutputs = clayCode.getOutputs()
+        val encodedResult = clayCode.encode(originalInputs, originalOutputs)
 
-        inputs = ClayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+        inputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
 
         val outputsArray =
             Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }

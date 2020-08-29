@@ -11,55 +11,48 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class ClayCode {
-    public static final int NUM_DATA_UNITS = 4;
-    public static final int NUM_PARITY_UNITS = 2;
-    public static final int BLOCK_SIZE = 8704;
-    public static int[] erasedIndexes = new int[] { 4, 5 };
     private static boolean startBufferWithZero = true;
 
-    public static ReedSolomon pairwiseDecoder = ReedSolomon.create(2, 2);
-    public static ReedSolomon rsRawDecoder = ReedSolomon.create(NUM_DATA_UNITS, NUM_PARITY_UNITS);
+    private int numDataUnits;
+    private int numParityUnits;
+    private int blockSize;
+    private int[] erasedIndexes;
+    private ReedSolomon pairwiseDecoder;
+    private ReedSolomon rsRawDecoder;
+    private ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil;
+    private ClayCodeErasureDecodingStep erasureDecodingStep;
 
-    public static ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil = new ClayCodeErasureDecodingStep.ClayCodeUtil(
-            erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
-    );
-
-    public static void main(String[] args) throws Exception {
-        int[] testErasedIndexesArray = new int[] { 1 };
-        List<Integer> testErasedIndexes = Arrays.stream(testErasedIndexesArray).boxed().collect(Collectors.toList());
-        ClayCodeErasureDecodingStep testClayCodeErasureDecodingStep = new ClayCodeErasureDecodingStep(
-                testErasedIndexesArray, pairwiseDecoder, rsRawDecoder
+    public ClayCode(int numDataUnits, int numParityUnits, int blockSize, int[] erasedIndexes) {
+        this.numDataUnits = numDataUnits;
+        this.numParityUnits = numParityUnits;
+        this.blockSize = blockSize;
+        this.erasedIndexes = erasedIndexes;
+        this.pairwiseDecoder = ReedSolomon.create(2, 2);
+        this.rsRawDecoder = ReedSolomon.create(numDataUnits, numParityUnits);
+        this.clayCodeUtil = new ClayCodeErasureDecodingStep.ClayCodeUtil(
+            erasedIndexes, numDataUnits, numParityUnits
         );
-
-        ECBlock[] inputs = getInputs();
-        ECBlock[] outputs = getOutputs();
-        List<ECChunk[]> encodedResult = encode(inputs, outputs);
-
-        ECChunk[] encodedInputChunks = encodedResult.get(0);
-        ECChunk[] encodedOutputChunks = encodedResult.get(1);
-
-        ECBlock[] testInputs = getTestInputs(encodedInputChunks, encodedOutputChunks, testErasedIndexesArray);
-        ECBlock[] testOutputs = getTestOutputs(testErasedIndexesArray.length * clayCodeUtil.getSubPacketSize(), BLOCK_SIZE);
-
-        ECChunk[] testInputChunks = getChunks(testInputs);
-        ECChunk[] testOutputChunks = getChunks(testOutputs);
-        testClayCodeErasureDecodingStep.performCoding(testInputChunks, testOutputChunks);
-
-        System.out.println("Checking");
+        this.erasureDecodingStep = new ClayCodeErasureDecodingStep(
+            erasedIndexes, pairwiseDecoder, rsRawDecoder
+        );
     }
 
-    public static ECBlock[] getInputs() throws Exception {
+    public void performCoding(ECChunk[] inputs, ECChunk[] outputs) throws Exception {
+        erasureDecodingStep.performCoding(inputs, outputs);
+    }
+
+    public ECBlock[] getInputs() throws Exception {
         File inputFile = new File("LP-block.jpg");
         DataInputStream dataInputStream = new DataInputStream(new FileInputStream(inputFile));
 
-        int inputsLength = (NUM_DATA_UNITS + NUM_PARITY_UNITS) * clayCodeUtil.getSubPacketSize();
+        int inputsLength = (numDataUnits + numParityUnits) * clayCodeUtil.getSubPacketSize();
 
-        ECBlock[] inputs = new ECBlock[(NUM_DATA_UNITS + NUM_PARITY_UNITS) * clayCodeUtil.getSubPacketSize()];
+        ECBlock[] inputs = new ECBlock[(numDataUnits + numParityUnits) * clayCodeUtil.getSubPacketSize()];
 
         int counter = 0;
         for (int i = 0; i < inputsLength; i++) {
-            if (counter < NUM_DATA_UNITS) {
-                ByteBuffer buffer = allocateOutputBuffer(BLOCK_SIZE, dataInputStream.readNBytes(BLOCK_SIZE));
+            if (counter < numDataUnits) {
+                ByteBuffer buffer = allocateOutputBuffer(blockSize, dataInputStream.readNBytes(blockSize));
                 ECChunk chunk = new ECChunk(buffer);
                 inputs[i] = new ECBlock(chunk, false, false);
             } else {
@@ -68,23 +61,23 @@ public class ClayCode {
                 inputs[i] = new ECBlock(chunk, true, true);
             }
             counter++;
-            counter = counter % (NUM_DATA_UNITS + NUM_PARITY_UNITS);
+            counter = counter % (numDataUnits + numParityUnits);
         }
 
         return inputs;
     }
 
-    public static ECBlock[] getOutputs() throws Exception {
+    public ECBlock[] getOutputs() throws Exception {
         ECBlock[] outputs = new ECBlock[erasedIndexes.length * clayCodeUtil.getSubPacketSize()];
         for (int i = 0; i < outputs.length; i++) {
-            ByteBuffer buffer = ByteBuffer.allocate(BLOCK_SIZE);
+            ByteBuffer buffer = ByteBuffer.allocate(blockSize);
             ECChunk chunk = new ECChunk(buffer);
             outputs[i] = new ECBlock(chunk, true, true);
         }
         return outputs;
     }
 
-    public static List<ECChunk[]> encode(ECBlock[] inputs, ECBlock[] outputs) throws Exception {
+    public List<ECChunk[]> encode(ECBlock[] inputs, ECBlock[] outputs) throws Exception {
         ClayCodeErasureDecodingStep clayCodeErasureDecodingStep = new ClayCodeErasureDecodingStep(
                 erasedIndexes, pairwiseDecoder, rsRawDecoder
         );
@@ -96,23 +89,23 @@ public class ClayCode {
         return List.of(inputChunks, outputChunks);
     }
 
-    public static ECBlock[] getTestInputs(ECChunk[] inputChunks, ECChunk[] outputChunks, int[] testErasedIndexesArray) throws Exception {
+    public ECBlock[] getTestInputs(ECChunk[] inputChunks, ECChunk[] outputChunks, int[] testErasedIndexesArray) throws Exception {
         // Test
         List<Integer> testErasedIndexes = Arrays.stream(testErasedIndexesArray).boxed().collect(Collectors.toList());
-        ECBlock[] testInputs = getTestInputs(inputChunks, outputChunks, testErasedIndexes, BLOCK_SIZE);
+        ECBlock[] testInputs = getTestInputs(inputChunks, outputChunks, testErasedIndexes, blockSize);
         return testInputs;
     }
 
-    private static ECBlock[] getTestInputs(ECChunk[] inputs, ECChunk[] outputs, List<Integer> erasedIndexes, int bufSize) {
+    private ECBlock[] getTestInputs(ECChunk[] inputs, ECChunk[] outputs, List<Integer> erasedIndexes, int bufSize) {
         ECBlock[] testInputs = new ECBlock[inputs.length];
         int k = 0;
         for (int i = 0; i < inputs.length; i++) {
             if (!erasedIndexes.contains(i)) {
                 ByteBuffer buffer;
                 if (inputs[i].getBuffer() != null) {
-                    buffer = allocateOutputBuffer(BLOCK_SIZE, inputs[i].getBuffer().array());
+                    buffer = allocateOutputBuffer(blockSize, inputs[i].getBuffer().array());
                 } else {
-                    buffer = allocateOutputBuffer(BLOCK_SIZE, outputs[k++].getBuffer().array());
+                    buffer = allocateOutputBuffer(blockSize, outputs[k++].getBuffer().array());
                 }
                 ECChunk chunk = new ECChunk(buffer);
                 testInputs[i] = new ECBlock(chunk, false, true);
@@ -125,17 +118,18 @@ public class ClayCode {
         return testInputs;
     }
 
-    public static ECBlock[] getTestOutputs(int length, int bufSize) {
+    public ECBlock[] getTestOutputs(int erasedIndexesSize) {
+        int length = erasedIndexesSize * clayCodeUtil.getSubPacketSize();
         ECBlock[] testOutputs = new ECBlock[length];
         for (int i = 0; i < length; i++) {
-            ByteBuffer buffer = ByteBuffer.allocate(bufSize);
+            ByteBuffer buffer = ByteBuffer.allocate(blockSize);
             ECChunk chunk = new ECChunk(buffer);
             testOutputs[i] = new ECBlock(chunk, false, true);
         }
         return testOutputs;
     }
 
-    public static ECChunk[] getChunks(ECBlock[] blocks) {
+    public ECChunk[] getChunks(ECBlock[] blocks) {
         ECChunk[] result = new ECChunk[blocks.length];
         for (int i = 0; i < blocks.length; i++) {
             ECBlock block = blocks[i];
@@ -146,7 +140,7 @@ public class ClayCode {
         return result;
     }
 
-    public static ByteBuffer allocateOutputBuffer(int bufferLen, byte[] data) {
+    private ByteBuffer allocateOutputBuffer(int bufferLen, byte[] data) {
         /*
          * When startBufferWithZero, will prepare a buffer as:---------------
          * otherwise, the buffer will be like:             ___TO--BE--WRITTEN___,
@@ -162,5 +156,53 @@ public class ClayCode {
         startBufferWithZero = ! startBufferWithZero;
 
         return buffer;
+    }
+
+    public int getNumDataUnits() {
+        return numDataUnits;
+    }
+
+    public void setNumDataUnits(int numDataUnits) {
+        this.numDataUnits = numDataUnits;
+    }
+
+    public int getNumParityUnits() {
+        return numParityUnits;
+    }
+
+    public void setNumParityUnits(int numParityUnits) {
+        this.numParityUnits = numParityUnits;
+    }
+
+    public int getBlockSize() {
+        return blockSize;
+    }
+
+    public void setBlockSize(int blockSize) {
+        this.blockSize = blockSize;
+    }
+
+    public ReedSolomon getPairwiseDecoder() {
+        return pairwiseDecoder;
+    }
+
+    public void setPairwiseDecoder(ReedSolomon pairwiseDecoder) {
+        this.pairwiseDecoder = pairwiseDecoder;
+    }
+
+    public ReedSolomon getRsRawDecoder() {
+        return rsRawDecoder;
+    }
+
+    public void setRsRawDecoder(ReedSolomon rsRawDecoder) {
+        this.rsRawDecoder = rsRawDecoder;
+    }
+
+    public void setErasedIndexes(int[] erasedIndexes) {
+        this.erasedIndexes = erasedIndexes;
+        this.clayCodeUtil = new ClayCodeErasureDecodingStep.ClayCodeUtil(erasedIndexes, numDataUnits, numParityUnits);
+        this.erasureDecodingStep = new ClayCodeErasureDecodingStep(
+                erasedIndexes, pairwiseDecoder, rsRawDecoder
+        );
     }
 }

@@ -172,7 +172,7 @@ public class ClayCodeErasureDecodingStep {
             ByteBuffer[] helperDecoupledPlane = new ByteBuffer[inputs[0].length];
 
             getDecoupledHelperPlane(helperCoupledPlanes, helperDecoupledPlane, i, helperIndexes, erasedIndex, bufSize, isDirect);
-            decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect);
+            decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, true);
 
             //after getting all the values in decoupled plane, find out q erased values
             for (int x = 0; x <util.q; x++) {
@@ -254,7 +254,7 @@ public class ClayCodeErasureDecodingStep {
         ByteBuffer[] helperDecoupledPlane = new ByteBuffer[util.q * util.t];
 
         getDecoupledHelperPlane(helperCoupledPlanes, helperDecoupledPlane, i, helperIndexes, erasedIndex, bufSize, isDirect);
-        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect);
+        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, true);
 
         //after getting all the values in decoupled plane, find out q erased values
         for (int x = 0; x <util.q; x++) {
@@ -344,7 +344,7 @@ public class ClayCodeErasureDecodingStep {
 
             for (int z : realZIndexes) {
                 getDecoupledPlane(inputs, temp[idx], z, bufSize, isDirect);
-                decodeDecoupledPlane(temp[idx], erasedIndexes, bufSize, isDirect);
+                decodeDecoupledPlane(temp[idx], erasedIndexes, bufSize, isDirect, false);
                 idx++;
 
             }
@@ -537,8 +537,10 @@ public class ClayCodeErasureDecodingStep {
      * @param decoupledPlane the plane to be decoded
      * @throws IOException
      */
-    private void decodeDecoupledPlane(ByteBuffer[] decoupledPlane, int[] erasedIndexes, int bufSize, boolean isDirect)
-            throws IOException {
+    private void decodeDecoupledPlane(
+            ByteBuffer[] decoupledPlane, int[] erasedIndexes,
+            int bufSize, boolean isDirect, boolean isSingle
+    ) throws IOException {
 
 
         ByteBuffer[] tmpOutputs = new ByteBuffer[erasedIndexes.length];
@@ -563,14 +565,12 @@ public class ClayCodeErasureDecodingStep {
         System.out.println("erasedIndexes: " + Arrays.toString(erasedIndexes));
 
         byte[][] output = new byte[erasedIndexes.length][bufSize];
-//        for (int i = 0; i < decoupledPlaneAsBytes.length - erasedIndexes.length; i++) {
-//            for (int j = 0; j < erasedIndexes.length; j++) {
-//                rsRawDecoder.encodeParitySingle(decoupledPlaneAsBytes[i], output[j], i, j, 0, bufSize);
-//                decoupledPlaneAsBytes[erasedIndexes[j]] = output[j];
-//            }
-//        }
-//        rsRawDecoder.encodeParity(decoupledPlaneAsBytes, 0, bufSize);
-        rsRawDecoder.decodeMissingNew(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+
+        if (isSingle) {
+            rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+        } else {
+            rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+        }
 
         for (int i = 0; i < erasedIndexes.length; ++i) {
             ByteBuffer buffer = ByteBuffer.wrap(decoupledPlaneAsBytes[erasedIndexes[i]]);

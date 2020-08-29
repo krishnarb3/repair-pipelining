@@ -7,6 +7,6 @@ object Util {
     const val NUM_PARITY_UNITS = 2
     const val NUM_TOTAL_UNITS = NUM_DATA_UNITS + NUM_PARITY_UNITS
     const val SUBPACKET_SIZE = 8
-    const val CLAY_BLOCK_SIZE = 8704
+    const val CLAY_BLOCK_SIZE = 2174
     const val FILE_READ_BUFFER_SIZE = 1024 * 1024
 }
