@@ -286,6 +286,60 @@ public class ReedSolomon {
                 offset, byteCount);
     }
 
+    public void decodeMissingSingle(byte[] shard, int index, boolean[] shardPresent,
+                                    byte[][] outputs,
+                                    final int offset, final int byteCount) {
+        Matrix subMatrix = new Matrix(dataShardCount, dataShardCount);
+
+        int subMatrixRow = 0;
+        for (int matrixRow = 0; matrixRow < totalShardCount && subMatrixRow < dataShardCount; matrixRow++) {
+            if (shardPresent[matrixRow]) {
+                for (int c = 0; c < dataShardCount; c++) {
+                    subMatrix.set(subMatrixRow, c, matrix.get(matrixRow, c));
+                }
+                subMatrixRow += 1;
+            }
+        }
+
+        Matrix dataDecodeMatrix = subMatrix.invert();
+        Arrays.fill(outputs, new byte[byteCount]);
+        byte [] [] matrixRows = new byte [parityShardCount] [];
+        int outputCount = 0;
+        for (int i = 0; i < dataShardCount; i++) {
+            if (!shardPresent[i]) {
+                outputs[outputCount] = shard;
+                matrixRows[outputCount] = dataDecodeMatrix.getRow(i);
+                outputCount += 1;
+            }
+        }
+        for (int j = 0; j < outputs.length; j++) {
+            InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
+            codingLoopSingle.codeSomeShards(
+                    matrixRows,
+                    shard, index, outputs[j], j,
+                    offset, byteCount
+            );
+        }
+        outputCount = 0;
+        if (index >= dataShardCount && !shardPresent[index]) {
+            outputs[outputCount] = shard;
+            matrixRows[outputCount] = parityRows[index - dataShardCount];
+            outputCount += 1;
+        }
+        for (int i = 0; i < dataShardCount; i++) {
+            for (int j = 0; j < outputCount; j++) {
+                InputOutputByteTableCodingLoopSingle codingLoopSingle = new InputOutputByteTableCodingLoopSingle();
+                codingLoopSingle.codeSomeShards(
+                        matrixRows,
+                        shard, i,
+                        outputs[j], j,
+                        offset, byteCount
+                );
+            }
+        }
+        System.out.println("CodingLoopSingle done");
+    }
+
     public void decodeMissingSingle(byte [] [] shards,
                                     boolean [] shardPresent,
                                     final int offset,
@@ -307,18 +361,17 @@ public class ReedSolomon {
             }
         }
 
-        {
-            int subMatrixRow = 0;
-            for (int matrixRow = 0; matrixRow < totalShardCount && subMatrixRow < dataShardCount; matrixRow++) {
-                if (shardPresent[matrixRow]) {
-                    for (int c = 0; c < dataShardCount; c++) {
-                        subMatrix.set(subMatrixRow, c, matrix.get(matrixRow, c));
-                    }
-                    subShards[subMatrixRow] = shards[matrixRow];
-                    subMatrixRow += 1;
+        int subMatrixRow = 0;
+        for (int matrixRow = 0; matrixRow < totalShardCount && subMatrixRow < dataShardCount; matrixRow++) {
+            if (shardPresent[matrixRow]) {
+                for (int c = 0; c < dataShardCount; c++) {
+                    subMatrix.set(subMatrixRow, c, matrix.get(matrixRow, c));
                 }
+                subShards[subMatrixRow] = shards[matrixRow];
+                subMatrixRow += 1;
             }
         }
+
         Matrix dataDecodeMatrix = subMatrix.invert();
         byte [] [] outputs = new byte [parityShardCount] [];
         Arrays.fill(outputs, new byte[byteCount]);

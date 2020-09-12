@@ -34,7 +34,7 @@ class NodeImpl(val nodeHelper: NodeHelper) : Node {
         logger.info("Node $nodeId initialized")
     }
 
-    override fun fetchBlock(blockId: String) {
+    override fun fetchBlock(blockId: String, blockSize: Int, subpacketIndex: Int) {
         jedis.publish(COORDINATOR_CHANNEL_NAME, "$nodeId $blockId")
     }
 

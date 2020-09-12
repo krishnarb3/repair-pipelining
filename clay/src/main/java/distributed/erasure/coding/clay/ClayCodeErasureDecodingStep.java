@@ -113,7 +113,7 @@ public class ClayCodeErasureDecodingStep {
      * @param erasedIndex the index of the erased node
      * @throws IOException
      */
-    private void doDecodeSingle(ByteBuffer[][] inputs,
+    public void doDecodeSingle(ByteBuffer[][] inputs,
                                 ByteBuffer[][] outputs,
                                 int erasedIndex,
                                 int bufSize,
@@ -564,10 +564,14 @@ public class ClayCodeErasureDecodingStep {
 
         System.out.println("erasedIndexes: " + Arrays.toString(erasedIndexes));
 
-        byte[][] output = new byte[erasedIndexes.length][bufSize];
+        byte[][] outputs = new byte[erasedIndexes.length][bufSize];
 
         if (isSingle) {
-            rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+            // Test
+            // rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+            for (int i = 0; i < decoupledPlaneAsBytes.length; i++) {
+                rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i], i, shardPresent, outputs, 0, bufSize);
+            }
         } else {
             rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
         }
@@ -614,7 +618,7 @@ public class ClayCodeErasureDecodingStep {
      * @param inputs  pairwise known couples
      * @param outputs pairwise couples of the known values
      */
-    private void getPairWiseCouple(ByteBuffer[] inputs, ByteBuffer[] outputs, int bufSize)
+    public void getPairWiseCouple(ByteBuffer[] inputs, ByteBuffer[] outputs, int bufSize)
             throws IOException {
         int[] lostCouples = new int[2];
         int[] inputPos = new int[inputs.length];

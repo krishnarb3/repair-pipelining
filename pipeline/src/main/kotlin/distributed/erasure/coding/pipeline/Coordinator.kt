@@ -1,8 +1,10 @@
 package distributed.erasure.coding.pipeline
 
 import distributed.erasure.coding.LRCErasureUtil
-import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
+import distributed.erasure.coding.pipeline.Util.COORDINATOR_CHANNEL_NAME
+import distributed.erasure.coding.pipeline.Util.HELPER_CHANNEL_PREFIX
 import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
+import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
 import mu.KotlinLogging
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -16,16 +18,13 @@ open class Coordinator(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    private val COORDINATOR_CHANNEL_NAME = "coordinator"
-    private val HELPER_CHANNEL_PREFIX = "helper"
-
     val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
     val COORDINATOR_IP = System.getProperty("coordinator.ip")
     val REDIS_PORT = 6379
     val erasureCode = ErasureCode.valueOf(System.getProperty("erasure.code"))
     val fetchMethod = System.getProperty("fetch.method") ?: "normal"
 
-    private var jedis: Jedis
+    var jedis: Jedis
 
     lateinit var latch: CountDownLatch
 
@@ -59,10 +58,11 @@ open class Coordinator(
     private fun fetchBlock(message: String) {
         val requesterNodeId = message.split(" ")[0].toInt()
         val blockId = message.split(" ")[1]
-        val senderNodeId = blockNodeMap[blockId] ?: -1
+        val erasedIndex = message.split(" ")[2].toInt()
         if (fetchMethod == "pipeline") {
-            fetchBlockUsingPipelining(requesterNodeId, blockId)
+            fetchBlockUsingPipelining(requesterNodeId, blockId, erasedIndex)
         } else {
+            val senderNodeId = blockNodeMap[blockId] ?: -1
             fetchBlock(requesterNodeId, senderNodeId, blockId)
         }
     }
@@ -91,11 +91,11 @@ open class Coordinator(
 
     open fun fetchBlockUsingPipelining(
         finalNodeId: Int,
-        blockId: String
+        blockId: String,
+        erasedIndex: Int
     ) {
         val nodesPath = when (erasureCode) {
             ErasureCode.LRC -> getNodesPathForLRC(blockId)
-            ErasureCode.CLAY -> getNodesPathForClay(blockId)
             else -> getNodesPath(blockId)
         }
 
@@ -176,11 +176,7 @@ open class Coordinator(
         return res
     }
 
-    fun getNodesPathForClay(blockId: String): List<Pair<Int, String>> {
-        return listOf()
-    }
-
-    private fun getNodesPath(blockId: String): List<Pair<Int, String>> {
+    fun getNodesPath(blockId: String): List<Pair<Int, String>> {
         return listOf()
     }
 }

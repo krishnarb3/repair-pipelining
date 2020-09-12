@@ -2,9 +2,7 @@ package distributed.erasure.coding.clay;
 
 import com.backblaze.erasure.ReedSolomon;
 
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileInputStream;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
@@ -47,21 +45,25 @@ public class ClayCode {
 
         int inputsLength = (numDataUnits + numParityUnits) * clayCodeUtil.getSubPacketSize();
 
-        ECBlock[] inputs = new ECBlock[(numDataUnits + numParityUnits) * clayCodeUtil.getSubPacketSize()];
+        ECBlock[] inputs = new ECBlock[inputsLength];
 
         int counter = 0;
-        for (int i = 0; i < inputsLength; i++) {
-            if (counter < numDataUnits) {
-                ByteBuffer buffer = allocateOutputBuffer(blockSize, dataInputStream.readNBytes(blockSize));
-                ECChunk chunk = new ECChunk(buffer);
-                inputs[i] = new ECBlock(chunk, false, false);
-            } else {
-                ByteBuffer buffer = null;
-                ECChunk chunk = new ECChunk(buffer);
-                inputs[i] = new ECBlock(chunk, true, true);
+
+        for (int i = 0; i < numDataUnits + numParityUnits; i++) {
+            for (int j = 0; j < clayCodeUtil.getSubPacketSize(); j++) {
+                int k = i * clayCodeUtil.getSubPacketSize() + j;
+                if (counter < numDataUnits) {
+                    ByteBuffer buffer = allocateOutputBuffer(blockSize, dataInputStream.readNBytes(blockSize));
+                    ECChunk chunk = new ECChunk(buffer);
+                    inputs[k] = new ECBlock(chunk, false, false);
+                } else {
+                    ByteBuffer buffer = null;
+                    ECChunk chunk = new ECChunk(buffer);
+                    inputs[k] = new ECBlock(chunk, true, true);
+                }
+                counter++;
+                counter = counter % (numDataUnits + numParityUnits);
             }
-            counter++;
-            counter = counter % (numDataUnits + numParityUnits);
         }
 
         return inputs;
@@ -99,20 +101,30 @@ public class ClayCode {
     private ECBlock[] getTestInputs(ECChunk[] inputs, ECChunk[] outputs, List<Integer> erasedIndexes, int bufSize) {
         ECBlock[] testInputs = new ECBlock[inputs.length];
         int k = 0;
-        for (int i = 0; i < inputs.length; i++) {
-            if (!erasedIndexes.contains(i)) {
-                ByteBuffer buffer;
-                if (inputs[i].getBuffer() != null) {
-                    buffer = allocateOutputBuffer(blockSize, inputs[i].getBuffer().array());
+
+        // TODO: Change this
+        String blockId = "LP";
+
+        for (int a = 0; a < numDataUnits + numParityUnits; a++) {
+            for (int b = 0; b < clayCodeUtil.getSubPacketSize(); b++) {
+                int i = a * clayCodeUtil.getSubPacketSize() + b;
+                if (!erasedIndexes.contains(a)) {
+                    ByteBuffer buffer;
+                    if (inputs[i].getBuffer() != null) {
+                        buffer = allocateOutputBuffer(blockSize, inputs[i].getBuffer().array());
+                        writeToFile(blockId + " " + a + " " + b, inputs[i].getBuffer().array());
+                    } else {
+                        buffer = allocateOutputBuffer(blockSize, outputs[k].getBuffer().array());
+                        writeToFile(blockId + " " + a + " " + b, outputs[k].getBuffer().array());
+                        k += 1;
+                    }
+                    ECChunk chunk = new ECChunk(buffer);
+                    testInputs[i] = new ECBlock(chunk, false, true);
                 } else {
-                    buffer = allocateOutputBuffer(blockSize, outputs[k++].getBuffer().array());
+                    ByteBuffer buffer = ByteBuffer.allocate(bufSize);
+                    ECChunk chunk = new ECChunk(buffer);
+                    testInputs[i] = new ECBlock(chunk, false, true);
                 }
-                ECChunk chunk = new ECChunk(buffer);
-                testInputs[i] = new ECBlock(chunk, false, true);
-            } else {
-                ByteBuffer buffer = ByteBuffer.allocate(bufSize);
-                ECChunk chunk = new ECChunk(buffer);
-                testInputs[i] = new ECBlock(chunk, false, true);
             }
         }
         return testInputs;
@@ -158,6 +170,22 @@ public class ClayCode {
         return buffer;
     }
 
+    private void writeToFile(String fileName, byte[] data) {
+        File file = null;
+        OutputStream outputStream = null;
+        DataOutputStream dataOutputStream = null;
+        try {
+            file = new File(fileName);
+            outputStream = new FileOutputStream(file);
+            dataOutputStream = new DataOutputStream(outputStream);
+            dataOutputStream.write(data);
+            dataOutputStream.close();
+            outputStream.close();
+        } catch (Exception e) {
+            System.err.println(e.getMessage());
+        }
+    }
+
     public int getNumDataUnits() {
         return numDataUnits;
     }
@@ -196,6 +224,14 @@ public class ClayCode {
 
     public void setRsRawDecoder(ReedSolomon rsRawDecoder) {
         this.rsRawDecoder = rsRawDecoder;
+    }
+
+    public ClayCodeErasureDecodingStep getErasureDecodingStep() {
+        return erasureDecodingStep;
+    }
+
+    public void setErasureDecodingStep(ClayCodeErasureDecodingStep erasureDecodingStep) {
+        this.erasureDecodingStep = erasureDecodingStep;
     }
 
     public void setErasedIndexes(int[] erasedIndexes) {

@@ -9,4 +9,7 @@ object Util {
     const val SUBPACKET_SIZE = 8
     const val CLAY_BLOCK_SIZE = 2174
     const val FILE_READ_BUFFER_SIZE = 1024 * 1024
+
+    val COORDINATOR_CHANNEL_NAME = "coordinator"
+    val HELPER_CHANNEL_PREFIX = "helper"
 }
