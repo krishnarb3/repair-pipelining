@@ -40,7 +40,7 @@ class ClayCodeHelper(
 //            val indices = (setOf(z) + coupleCoordinates).toList()
             val indices = (0 until NUM_TOTAL_UNITS).toList()
 
-            getHelperPlanes(blockId, helperCoupledPlanes, helperIndexes, indices)
+            getHelperPlanes(blockId, helperCoupledPlanes, helperIndexes, indices, util.subPacketSize)
 
             clayCodeErasureDecodingStep.doDecodeSingle(
                 helperCoupledPlanes,
@@ -62,24 +62,49 @@ class ClayCodeHelper(
         blockId: String,
         helperCoupledPlanes: Array<Array<ByteBuffer?>>,
         helperIndexes: IntArray,
-        indices: List<Int>
+        indices: List<Int>,
+        subpacketSize: Int
     ) {
         for (i in helperIndexes.indices) {
             for (j in indices.indices) {
-                helperCoupledPlanes[i][j] = getInput(blockId, 0, helperIndexes[i], j)
+                helperCoupledPlanes[i][j] = getInput(blockId, subpacketSize, helperIndexes[i], indices[j])
             }
         }
     }
 
-    private fun getInput(blockId: String, subpacketIndex: Int, xIndex: Int, yIndex: Int): ByteBuffer? {
-        // TODO: Fix this method
-        val newIn = Array(SUBPACKET_SIZE) { arrayOfNulls<ByteBuffer>(NUM_DATA_UNITS + NUM_TOTAL_UNITS) }
-        for (i in 0 until SUBPACKET_SIZE) {
-            for (j in 0 until NUM_DATA_UNITS + NUM_PARITY_UNITS) {
-                newIn[i][j] = inputs[i * (NUM_DATA_UNITS + NUM_PARITY_UNITS) + j].chunk.buffer
-            }
-        }
-        val input = newIn[xIndex][yIndex]
-        return input
+    private fun getInput(blockId: String, subpacketSize: Int, subpacketIndex: Int, nodeIndex: Int): ByteBuffer? {
+        return inputs[nodeIndex * subpacketSize + subpacketIndex].chunk.buffer
     }
+}
+
+fun main() {
+    val NUM_DATA_UNITS = 4
+    val NUM_PARITY_UNITS = 2
+    val NUM_TOTAL_UNITS = NUM_DATA_UNITS + NUM_PARITY_UNITS
+    val CLAY_BLOCK_SIZE = 2174
+    val SUBPACKET_SIZE = 8
+    val erasedIndex = 1
+
+    val erasedIndexes = intArrayOf(erasedIndex)
+    val isDirect = true
+    val util = ClayCodeErasureDecodingStep.ClayCodeUtil(
+        erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
+    )
+    val parityIndexes = (NUM_DATA_UNITS until NUM_TOTAL_UNITS).toList().toIntArray()
+    val clayCode = ClayCode(NUM_DATA_UNITS, NUM_PARITY_UNITS, CLAY_BLOCK_SIZE, parityIndexes)
+    val originalInputs = clayCode.getInputs()
+    val originalOutputs = clayCode.getOutputs()
+    val encodedResult = clayCode.encode(originalInputs, originalOutputs)
+
+    val inputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+
+    val outputsArray = Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }
+    val clayCodeHelper = ClayCodeHelper(NUM_DATA_UNITS, NUM_PARITY_UNITS, SUBPACKET_SIZE, inputs)
+    val outputs = Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }
+
+
+//    clayCode.erasureDecodingStep.doDecodeSingle(inputs, outputs, 1, CLAY_BLOCK_SIZE, false)
+    clayCodeHelper.getHelperPlanesAndDecode(util, "LP", outputsArray, erasedIndex, CLAY_BLOCK_SIZE, false)
+
+    println("Decode completed using helper")
 }

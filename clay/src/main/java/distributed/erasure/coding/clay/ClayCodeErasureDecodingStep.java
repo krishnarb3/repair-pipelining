@@ -254,7 +254,7 @@ public class ClayCodeErasureDecodingStep {
         ByteBuffer[] helperDecoupledPlane = new ByteBuffer[util.q * util.t];
 
         getDecoupledHelperPlane(helperCoupledPlanes, helperDecoupledPlane, i, helperIndexes, erasedIndex, bufSize, isDirect);
-        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, true);
+        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, false);
 
         //after getting all the values in decoupled plane, find out q erased values
         for (int x = 0; x <util.q; x++) {
@@ -566,11 +566,11 @@ public class ClayCodeErasureDecodingStep {
 
         byte[][] outputs = new byte[erasedIndexes.length][bufSize];
 
-        if (isSingle) {
-            // Test
-            // rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+        if (isSingle && System.getProperty("isTest").equals("true")) {
+            rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
+        } else if (isSingle) {
             for (int i = 0; i < decoupledPlaneAsBytes.length; i++) {
-                rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i], i, shardPresent, outputs, 0, bufSize);
+                rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i], i, i, shardPresent, outputs, 0, bufSize, false);
             }
         } else {
             rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);

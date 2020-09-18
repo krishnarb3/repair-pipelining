@@ -1,6 +1,8 @@
 package distributed.erasure.coding.clay;
 
 import com.backblaze.erasure.ReedSolomon;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -19,6 +21,8 @@ public class ClayCode {
     private ReedSolomon rsRawDecoder;
     private ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil;
     private ClayCodeErasureDecodingStep erasureDecodingStep;
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
 
     public ClayCode(int numDataUnits, int numParityUnits, int blockSize, int[] erasedIndexes) {
         this.numDataUnits = numDataUnits;
@@ -121,6 +125,11 @@ public class ClayCode {
                     ECChunk chunk = new ECChunk(buffer);
                     testInputs[i] = new ECBlock(chunk, false, true);
                 } else {
+                    if (inputs[i].getBuffer() != null) {
+                        writeToFile("ORIGINAL " + blockId + " " + a + " " + b, inputs[i].getBuffer().array());
+                    } else {
+                        writeToFile("ORIGINAL " + blockId + " " + a + " " + b, outputs[k++].getBuffer().array());
+                    }
                     ByteBuffer buffer = ByteBuffer.allocate(bufSize);
                     ECChunk chunk = new ECChunk(buffer);
                     testInputs[i] = new ECBlock(chunk, false, true);
@@ -182,7 +191,7 @@ public class ClayCode {
             dataOutputStream.close();
             outputStream.close();
         } catch (Exception e) {
-            System.err.println(e.getMessage());
+            logger.error(e.getMessage());
         }
     }
 
