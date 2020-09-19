@@ -307,7 +307,7 @@ public class ReedSolomon {
             int outputCount = 0;
             for (int i = 0; i < dataShardCount; i++) {
                 if (!shardPresent[i]) {
-                    outputs[outputCount] = shard.clone();
+                    outputs[outputCount] = new byte[byteCount];
                     matrixRows[outputCount] = dataDecodeMatrix.getRow(i);
                     outputCount += 1;
                 }

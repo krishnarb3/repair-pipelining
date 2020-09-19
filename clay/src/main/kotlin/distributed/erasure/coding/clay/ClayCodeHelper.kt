@@ -67,13 +67,13 @@ class ClayCodeHelper(
     ) {
         for (i in helperIndexes.indices) {
             for (j in indices.indices) {
-                helperCoupledPlanes[i][j] = getInput(blockId, subpacketSize, helperIndexes[i], indices[j])
+                helperCoupledPlanes[i][j] = getInput(blockId, 0, helperIndexes[i], j)
             }
         }
     }
 
-    private fun getInput(blockId: String, subpacketSize: Int, subpacketIndex: Int, nodeIndex: Int): ByteBuffer? {
-        return inputs[nodeIndex * subpacketSize + subpacketIndex].chunk.buffer
+    private fun getInput(blockId: String, subpacketIndex: Int, xIndex: Int, yIndex: Int): ByteBuffer? {
+        return inputs[xIndex * (NUM_DATA_UNITS + NUM_PARITY_UNITS) + yIndex].chunk.buffer
     }
 }
 
@@ -100,10 +100,7 @@ fun main() {
 
     val outputsArray = Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }
     val clayCodeHelper = ClayCodeHelper(NUM_DATA_UNITS, NUM_PARITY_UNITS, SUBPACKET_SIZE, inputs)
-    val outputs = Array(SUBPACKET_SIZE) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(CLAY_BLOCK_SIZE)) } }
 
-
-//    clayCode.erasureDecodingStep.doDecodeSingle(inputs, outputs, 1, CLAY_BLOCK_SIZE, false)
     clayCodeHelper.getHelperPlanesAndDecode(util, "LP", outputsArray, erasedIndex, CLAY_BLOCK_SIZE, false)
 
     println("Decode completed using helper")

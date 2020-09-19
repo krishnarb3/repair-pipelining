@@ -95,9 +95,12 @@ class ClayCoordinator(
             }
             logger.debug("Erased decoupled nodes: ${erasedDecoupledNodes.joinToString(",")}")
 
+            // Currently running into a race condition issue without some delay
+            Thread.sleep(1000)
+
             decodeDecoupledData(blockId, erasedDecoupledNodes, helperIndexes[i])
 
-            getAndStoreErasedData(blockId, util, erasedIndex, helperIndexes[i], y)
+            getAndStoreErasedData(blockId, util, erasedIndex, i, helperIndexes, y)
         }
 
         for (i in 0 until util.q * util.t) {
@@ -194,22 +197,27 @@ class ClayCoordinator(
 
         // Send to erased nodes
         val lastNodeId = nodesPath.last()
+        val receiverHosts = mutableListOf<String>()
+        val receiverPorts = mutableListOf<Int>()
+        val outputIndexes = mutableListOf<Int>()
         for (index in erasedDecoupledNodes.indices) {
             val receiverId = erasedDecoupledNodes[index]
-            val receiverHost = nodeHostMap[receiverId]?.first ?: throw Exception("Host not found for $receiverId")
-            val receiverPort = nodeHostMap[receiverId]?.second ?: throw Exception("Port not found for $receiverId")
+            receiverHosts.add(nodeHostMap[receiverId]?.first ?: throw Exception("Host not found for $receiverId"))
+            receiverPorts.add(nodeHostMap[receiverId]?.second ?: throw Exception("Port not found for $receiverId"))
+            outputIndexes.add(index)
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$receiverId.receive.decoded.data",
                 "$blockId $subpacketIndex $CLAY_BLOCK_SIZE"
             )
-            jedis.publish(
-                "$HELPER_CHANNEL_PREFIX.$lastNodeId.send.decoded.data",
-                "$blockId $subpacketIndex $CLAY_BLOCK_SIZE" +
-                        " $receiverHost $receiverPort ${nodesPath.lastIndex} $index" +
-                        " $NUM_DATA_UNITS $NUM_PARITY_UNITS" +
-                        " ${erasedDecoupledNodes.joinToString(",")} false"
-            )
         }
+        jedis.publish(
+            "$HELPER_CHANNEL_PREFIX.$lastNodeId.send.decoded.data",
+            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE" +
+                    " ${receiverHosts.joinToString(",")} ${receiverPorts.joinToString(",")}" +
+                    " ${nodesPath.lastIndex} ${outputIndexes.joinToString(",")}" +
+                    " $NUM_DATA_UNITS $NUM_PARITY_UNITS" +
+                    " ${erasedDecoupledNodes.joinToString(",")} false"
+        )
     }
 
     private fun getAndStoreErasedData(
@@ -217,19 +225,19 @@ class ClayCoordinator(
         util: ClayCodeErasureDecodingStep.ClayCodeUtil,
         erasedIndex: Int,
         currHelperIndex: Int,
+        helperIndexes: IntArray,
         y: Int
     ) {
         for (x in 0 until util.q) {
-            val z = currHelperIndex
+            val z = helperIndexes[currHelperIndex]
             val nodeIndex = util.getNodeIndex(x, y)
 
             if (nodeIndex == erasedIndex) {
-                storeErasedData(blockId, nodeIndex, currHelperIndex)
+                storeErasedData(blockId, nodeIndex, helperIndexes[currHelperIndex])
             } else {
                 val coupledZIndex = util.getCouplePlaneIndex(intArrayOf(x, y), z)
-                getAndStorePairwiseCouple(blockId, nodeIndex, currHelperIndex)
 
-                sendErasedData(blockId, nodeIndex, currHelperIndex, coupledZIndex, erasedIndex, nodeHostMap[erasedIndex]!!.first, nodeHostMap[erasedIndex]!!.second)
+                sendErasedData(blockId, nodeIndex, helperIndexes[currHelperIndex], helperIndexes[currHelperIndex], coupledZIndex, erasedIndex, nodeHostMap[erasedIndex]!!.first, nodeHostMap[erasedIndex]!!.second)
             }
         }
     }
@@ -242,23 +250,18 @@ class ClayCoordinator(
     }
 
     private fun sendErasedData(
-        blockId: String, nodeIndex: Int, subpacketIndex: Int, zIndex: Int,
+        blockId: String, nodeIndex: Int, coupleSubpacketIndex: Int, decoupleSubpacketIndex: Int,
+        zIndex: Int,
         receiverId: Int, receiverHost: String, receiverPort: Int
     ) {
+        logger.debug("Node $nodeIndex sending erased data to $receiverId")
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$receiverId.receive.erased.data",
             "$blockId $zIndex $CLAY_BLOCK_SIZE"
         )
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$nodeIndex.send.erased.data",
-            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE $receiverHost $receiverPort"
-        )
-    }
-
-    private fun getAndStorePairwiseCouple(blockId: String, nodeIndex: Int, subpacketIndex: Int) {
-        jedis.publish(
-            "$HELPER_CHANNEL_PREFIX.$nodeIndex.store.pairwise.couple",
-            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE"
+            "$blockId $coupleSubpacketIndex $decoupleSubpacketIndex $CLAY_BLOCK_SIZE $receiverHost $receiverPort"
         )
     }
 

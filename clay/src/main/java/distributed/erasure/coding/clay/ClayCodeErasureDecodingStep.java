@@ -254,7 +254,7 @@ public class ClayCodeErasureDecodingStep {
         ByteBuffer[] helperDecoupledPlane = new ByteBuffer[util.q * util.t];
 
         getDecoupledHelperPlane(helperCoupledPlanes, helperDecoupledPlane, i, helperIndexes, erasedIndex, bufSize, isDirect);
-        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, false);
+        decodeDecoupledPlane(helperDecoupledPlane, erasedDecoupledNodes, bufSize, isDirect, true);
 
         //after getting all the values in decoupled plane, find out q erased values
         for (int x = 0; x <util.q; x++) {
@@ -566,12 +566,19 @@ public class ClayCodeErasureDecodingStep {
 
         byte[][] outputs = new byte[erasedIndexes.length][bufSize];
 
-        if (isSingle && System.getProperty("isTest").equals("true")) {
-            rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
-        } else if (isSingle) {
-            for (int i = 0; i < decoupledPlaneAsBytes.length; i++) {
-                rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i], i, i, shardPresent, outputs, 0, bufSize, false);
+        if (isSingle && System.getProperty("isTest") != null && System.getProperty("isTest").equals("true")) {
+            for (int i = 0; i < decoupledPlaneAsBytes.length - erasedIndexes.length; i++) {
+                if (i == 0) {
+                    rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i + erasedIndexes.length], i + erasedIndexes.length, i, shardPresent, outputs, 0, bufSize, true);
+                } else {
+                    rsRawDecoder.decodeMissingSingle(decoupledPlaneAsBytes[i + erasedIndexes.length], i + erasedIndexes.length, i, shardPresent, outputs, 0, bufSize, false);
+                }
             }
+            for (int i = 0; i < outputs.length; i++) {
+                decoupledPlaneAsBytes[erasedIndexes[i]] = outputs[i];
+            }
+        } else if (isSingle) {
+            rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
         } else {
             rsRawDecoder.decodeMissing(decoupledPlaneAsBytes, shardPresent, 0, bufSize);
         }
