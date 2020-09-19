@@ -39,7 +39,7 @@ open class Coordinator(
         val jedisPubSub = getJedisPubSub()
 
         Thread {
-            jedisForSubscribe.psubscribe(jedisPubSub, COORDINATOR_CHANNEL_NAME, "$HELPER_CHANNEL_PREFIX.*")
+            jedisForSubscribe.psubscribe(jedisPubSub, "$COORDINATOR_CHANNEL_NAME.*", "$HELPER_CHANNEL_PREFIX.*")
         }.start()
 
         logger.info("Initialized coordinator")
@@ -49,9 +49,9 @@ open class Coordinator(
         override fun onPMessage(pattern: String, channel: String, message: String) {
             logger.debug("Coordinator received channel: $channel, pattern message: $message")
             when (channel) {
-                COORDINATOR_CHANNEL_NAME -> fetchBlock(message)
+                "$COORDINATOR_CHANNEL_NAME.fetch" -> fetchBlock(message)
+                "$COORDINATOR_CHANNEL_NAME.terminated" -> waitForTerminate(message)
             }
-            latch.countDown()
         }
     }
 
@@ -178,6 +178,10 @@ open class Coordinator(
 
     fun getNodesPath(blockId: String): List<Pair<Int, String>> {
         return listOf()
+    }
+
+    open fun waitForTerminate(message: String) {
+
     }
 }
 

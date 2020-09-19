@@ -1,6 +1,8 @@
 package distributed.erasure.coding.clay;
 
 import com.backblaze.erasure.ReedSolomon;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -19,6 +21,8 @@ public class ClayCode {
     private ReedSolomon rsRawDecoder;
     private ClayCodeErasureDecodingStep.ClayCodeUtil clayCodeUtil;
     private ClayCodeErasureDecodingStep erasureDecodingStep;
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
 
     public ClayCode(int numDataUnits, int numParityUnits, int blockSize, int[] erasedIndexes) {
         this.numDataUnits = numDataUnits;
@@ -112,18 +116,35 @@ public class ClayCode {
                     ByteBuffer buffer;
                     if (inputs[i].getBuffer() != null) {
                         buffer = allocateOutputBuffer(blockSize, inputs[i].getBuffer().array());
-                        writeToFile(blockId + " " + a + " " + b, inputs[i].getBuffer().array());
                     } else {
                         buffer = allocateOutputBuffer(blockSize, outputs[k].getBuffer().array());
-                        writeToFile(blockId + " " + a + " " + b, outputs[k].getBuffer().array());
                         k += 1;
                     }
                     ECChunk chunk = new ECChunk(buffer);
                     testInputs[i] = new ECBlock(chunk, false, true);
                 } else {
+                    if (inputs[i].getBuffer() == null) {
+                        k++;
+                    }
                     ByteBuffer buffer = ByteBuffer.allocate(bufSize);
                     ECChunk chunk = new ECChunk(buffer);
                     testInputs[i] = new ECBlock(chunk, false, true);
+                }
+            }
+        }
+
+        k = 0;
+        for (int i = 0; i < clayCodeUtil.getSubPacketSize(); i++) {
+            for (int j = 0; j < numDataUnits + numParityUnits; j++) {
+                int inputIndex = i * (numDataUnits + numParityUnits) + j;
+                String prefix = "";
+                if (j == 1) {
+                    prefix = "ORIGINAL ";
+                }
+                if (inputs[inputIndex].getBuffer() != null) {
+                    writeToFile(prefix + blockId + " " + j + " " + i, inputs[inputIndex].getBuffer().array());
+                } else {
+                    writeToFile(prefix + blockId + " " + j + " " + i, outputs[k++].getBuffer().array());
                 }
             }
         }
@@ -182,7 +203,7 @@ public class ClayCode {
             dataOutputStream.close();
             outputStream.close();
         } catch (Exception e) {
-            System.err.println(e.getMessage());
+            logger.error(e.getMessage());
         }
     }
 

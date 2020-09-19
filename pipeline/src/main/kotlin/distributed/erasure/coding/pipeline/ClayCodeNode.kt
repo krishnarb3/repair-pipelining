@@ -2,6 +2,7 @@ package distributed.erasure.coding.pipeline
 
 import com.backblaze.erasure.InputOutputByteTableCodingLoop
 import com.backblaze.erasure.ReedSolomon
+import distributed.erasure.coding.pipeline.Util.COORDINATOR_CHANNEL_NAME
 import distributed.erasure.coding.pipeline.Util.HELPER_CHANNEL_PREFIX
 import mu.KotlinLogging
 import redis.clients.jedis.Jedis
@@ -63,10 +64,10 @@ class ClayCodeNode : Node {
                 "$HELPER_CHANNEL_PREFIX.$nodeId.decode.and.send" -> decodeAndSend(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.receive.decoded.data" -> receiveDecodedData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.send.decoded.data" -> sendDecodedData(message)
-                "$HELPER_CHANNEL_PREFIX.$nodeId.store.pairwise.couple" -> storePairwiseCouple(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.store.erased.data" -> storeErasedData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.receive.erased.data" -> receiveErasedData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.send.erased.data" -> sendErasedData(message)
+                "$HELPER_CHANNEL_PREFIX.$nodeId.terminate" -> terminate(message)
                 else -> {
                     logger.error("Received message in $channel - Doing nothing")
                 }
@@ -84,7 +85,7 @@ class ClayCodeNode : Node {
         DataInputStream(FileInputStream(inputFile)).use {
             it.read(data, 0, blockSize)
         }
-        logger.info("Storing decoupled data: ($blockId $nodeId $subpacketIndex)")
+        logger.debug("Storing decoupled data: ($blockId $nodeId $subpacketIndex)")
         decoupledDataMap["$blockId $nodeId $subpacketIndex"] = data
     }
 
@@ -99,7 +100,6 @@ class ClayCodeNode : Node {
 
         val array1 = File("$blockId $nodeId $subpacketIndex").readBytes()
         val array2 = data[0]
-        logger.info("Array1 size: ${array1.size}, Array2 size: ${array2.size}")
         val pairwiseDecoder = ReedSolomon(2, 2, InputOutputByteTableCodingLoop())
         val inputs = arrayOf(array1, array2, ByteArray(blockSize), ByteArray(blockSize))
         pairwiseDecoder.decodeMissing(
@@ -109,7 +109,7 @@ class ClayCodeNode : Node {
             blockSize
         )
 
-        logger.info("Received and storing decoupled data: ($blockId $nodeId $subpacketIndex)")
+        logger.debug("Received and storing decoupled data: ($blockId $nodeId $subpacketIndex)")
         decoupledDataMap["$blockId $nodeId $subpacketIndex"] = inputs[2] ?: throw Exception("Decoupled data is null")
     }
 
@@ -124,6 +124,7 @@ class ClayCodeNode : Node {
 
         val file = File("$blockId $nodeId $subpacketIndex")
         val data = file.readBytes()
+        logger.debug("Send data for decouple ($blockId $nodeId $subpacketIndex)")
         sendData(blockSize, host, port, data)
     }
 
@@ -135,6 +136,7 @@ class ClayCodeNode : Node {
         val blockSize = split[2].toInt()
         val outputSize = split[3].toInt()
 
+        logger.debug("Receiving output data for: ($blockId $nodeId $subpacketIndex)")
         val data = receiveData(blockSize, outputSize)
         dataMap["$blockId $nodeId $subpacketIndex"] = data
     }
@@ -151,6 +153,7 @@ class ClayCodeNode : Node {
         val numDataUnits = split[6].toInt()
         val numParityUnits = split[7].toInt()
         val erasedIndexes = split[8].split(",").map { it.toInt() }
+        val isFirst = split[9] == "true"
 
         val outputs = dataMap["$blockId $nodeId $subpacketIndex"]
             ?: Array(erasedIndexes.size) { ByteArray(blockSize) }
@@ -158,12 +161,13 @@ class ClayCodeNode : Node {
         val inputShard = decoupledDataMap["$blockId $nodeId $subpacketIndex"]
             ?: throw Exception("Decoupled data not found for ($blockId $nodeId $subpacketIndex)")
         val shardPresent = (0 until numDataUnits + numParityUnits).map { !erasedIndexes.contains(it) }.toBooleanArray()
-        rsDecoder.decodeMissingSingle(inputShard, index, shardPresent, outputs, 0, blockSize)
+        rsDecoder.decodeMissingSingle(inputShard, nodeId.toInt(), index, shardPresent, outputs, 0, blockSize, isFirst)
 
         val data = ByteBuffer.allocate(erasedIndexes.size * blockSize)
         for (i in erasedIndexes) {
             data.put(outputs[i])
         }
+        logger.debug("Sending $subpacketIndex data to $receiverPort")
         sendData(blockSize, receiverHost, receiverPort, data.array())
     }
 
@@ -175,7 +179,7 @@ class ClayCodeNode : Node {
         val blockSize = split[2].toInt()
 
         val data = receiveData(blockSize)
-        logger.info("Received decoupled data: ($blockId $nodeId $subpacketIndex)")
+        logger.debug("Received decoupled data: ($blockId $nodeId $subpacketIndex)")
         decoupledDataMap["$blockId $nodeId $subpacketIndex"] = data[0]
     }
 
@@ -185,34 +189,25 @@ class ClayCodeNode : Node {
         val blockId = split[0]
         val subpacketIndex = split[1].toInt()
         val blockSize = split[2].toInt()
-        val receiverHost = split[3]
-        val receiverPort = split[4].toInt()
+        val receiverHosts = split[3].split(",")
+        val receiverPorts = split[4].split(",").map { it.toInt() }
         val index = split[5].toInt()
-        val outputIndex = split[6].toInt()
+        val outputIndexes = split[6].split(",").map { it.toInt() }
         val numDataUnits = split[7].toInt()
         val numParityUnits = split[8].toInt()
         val erasedIndexes = split[9].split(",").map { it.toInt() }.toTypedArray()
+        val isFirst = split[9] == "true"
 
         val outputs = dataMap["$blockId $nodeId $subpacketIndex"]
             ?: throw Exception("Couldn't find output data for block: $blockId, plane: $subpacketIndex")
         val rsDecoder = ReedSolomon(numDataUnits, numParityUnits, InputOutputByteTableCodingLoop())
         val inputShard = decoupledDataMap["$blockId $nodeId $subpacketIndex"]
         val shardPresent = (0 until numDataUnits + numParityUnits).map { !erasedIndexes.contains(it) }.toBooleanArray()
-        rsDecoder.decodeMissingSingle(inputShard, index, shardPresent, outputs, 0, blockSize)
+        rsDecoder.decodeMissingSingle(inputShard, nodeId.toInt(), index, shardPresent, outputs, 0, blockSize, isFirst)
 
-        sendData(blockSize, receiverHost, receiverPort, outputs[outputIndex])
-    }
-
-    @Synchronized
-    private fun storePairwiseCouple(message: String) {
-        val split = message.split(" ")
-        val blockId = split[0]
-        val subpacketIndex = split[1]
-        val blockSize = split[2]
-
-        val decoupledData = decoupledDataMap["$blockId $nodeId $subpacketIndex"] ?: File("$blockId $nodeId $subpacketIndex").readBytes()
-        logger.info("Storing decoupled data (pairwiseCouple): ($blockId $nodeId $subpacketIndex)")
-        decoupledDataMap["$blockId $nodeId $subpacketIndex"] = decoupledData
+        for (i in erasedIndexes.indices) {
+            sendData(blockSize, receiverHosts[i], receiverPorts[i], outputs[outputIndexes[i]])
+        }
     }
 
     @Synchronized
@@ -236,7 +231,7 @@ class ClayCodeNode : Node {
         val blockSize = split[2].toInt()
 
         val data = receiveData(blockSize)
-        logger.info("Stored erased data in ($blockId $nodeId $subpacketIndex)")
+        logger.debug("Received and stored erased data in ($blockId $nodeId $subpacketIndex)")
         File("$blockId $nodeId $subpacketIndex").writeBytes(data[0])
     }
 
@@ -244,18 +239,39 @@ class ClayCodeNode : Node {
     private fun sendErasedData(message: String) {
         val split = message.split(" ")
         val blockId = split[0]
-        val subpacketIndex = split[1].toInt()
-        val blockSize = split[2].toInt()
-        val receiverHost = split[3]
-        val receiverPort = split[4].toInt()
+        val coupleSubpacketIndex = split[1].toInt()
+        val decoupleSubpacketIndex = split[2].toInt()
+        val blockSize = split[3].toInt()
+        val receiverHost = split[4]
+        val receiverPort = split[5].toInt()
 
         val outputs = ByteArray(blockSize)
         val pairwiseDecoder = ReedSolomon(2, 2, InputOutputByteTableCodingLoop())
-        val coupledData = File("$blockId $nodeId $subpacketIndex").readBytes()
-        val inputs = arrayOf(ByteArray(blockSize), coupledData, ByteArray(blockSize), decoupledDataMap["$blockId $nodeId $subpacketIndex"])
+        val coupledData = File("$blockId $nodeId $coupleSubpacketIndex").readBytes()
+        val inputs = arrayOf(ByteArray(blockSize), coupledData, ByteArray(blockSize), decoupledDataMap["$blockId $nodeId $decoupleSubpacketIndex"])
         pairwiseDecoder.decodeMissing(inputs, booleanArrayOf(false, true, false, true), 0, blockSize)
 
-        sendData(blockSize, receiverHost, receiverPort, inputs[1]!!)
+        sendData(blockSize, receiverHost, receiverPort, inputs[0]!!)
+    }
+
+    @Synchronized
+    private fun terminate(message: String) {
+        val blockId = message
+        val dataKeysToDelete = dataMap.keys.filter { it.startsWith(blockId) }
+        for (key in dataKeysToDelete) {
+            dataMap.remove(key)
+        }
+        val decoupledKeysToDelete = decoupledDataMap.keys.filter { it.startsWith(blockId) }
+        for (key in decoupledKeysToDelete) {
+            decoupledDataMap.remove(key)
+        }
+
+        logger.info("Terminating block: $blockId node: $nodeId")
+
+        jedis.publish(
+            "$COORDINATOR_CHANNEL_NAME.terminated",
+            "$blockId $nodeId"
+        )
     }
 
     override fun setLatch(latch: CountDownLatch) { this._latch = latch }
@@ -264,7 +280,7 @@ class ClayCodeNode : Node {
     private fun receiveData(blockSize: Int, noOfBlocks: Int = 1): Array<ByteArray> {
         serverSocket.accept().use { socket ->
             DataInputStream(BufferedInputStream(socket.getInputStream())).use { socketIn ->
-                while (socketIn.available() <= 0) {
+                while (socketIn.available() < blockSize * noOfBlocks) {
                     // Wait for data
                 }
                 return (0 until noOfBlocks).map {
