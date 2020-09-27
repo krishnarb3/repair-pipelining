@@ -18,6 +18,8 @@
 package distributed.erasure.coding.clay;
 
 import com.backblaze.erasure.ReedSolomon;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -31,7 +33,7 @@ public class ClayCodeErasureDecodingStep {
 
     private ClayCodeUtil util;
 
-
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
     /**
      * Basic constructor with necessary info
      *
@@ -100,7 +102,7 @@ public class ClayCodeErasureDecodingStep {
             doDecodeMulti(newIn, newOut, bufSize, isDirect);
         }
 
-        System.out.println("Completed coding step");
+        logger.debug("Completed coding step");
 
     }
 
@@ -143,7 +145,7 @@ public class ClayCodeErasureDecodingStep {
     helper planes are the ones with hole dot pairs
     */
         int[] helperIndexes = util.getHelperPlanesIndexes(erasedIndex);
-        System.out.println(Arrays.toString(helperIndexes));
+        logger.debug("Helper indexes: " + Arrays.toString(helperIndexes));
         ByteBuffer[][] helperCoupledPlanes = new ByteBuffer[helperIndexes.length][inputs[0].length];
 
         getHelperPlanes(inputs, helperCoupledPlanes, erasedIndex);
@@ -184,7 +186,7 @@ public class ClayCodeErasureDecodingStep {
 
                     int coupledZIndex = util.getCouplePlaneIndex(new int[]{x, y}, z);
 
-                    System.out.println("Helper plane [" + i + "][" + nodeIndex + "]");
+                    logger.trace("Helper plane [" + i + "][" + nodeIndex + "]");
 
                     getPairWiseCouple(new ByteBuffer[]{null, helperCoupledPlanes[i][nodeIndex], null, helperDecoupledPlane[nodeIndex]}, tmpOutputs, bufSize);
 
@@ -197,7 +199,7 @@ public class ClayCodeErasureDecodingStep {
                 }
             }
 
-            System.out.println("Z done: " + z);
+            logger.trace("Z done: " + z);
         }
 
         //restoring the positions of output buffers back
@@ -240,7 +242,7 @@ public class ClayCodeErasureDecodingStep {
         int y = util.getNodeCoordinates(erasedIndex)[1];
         int[] erasedDecoupledNodes = new int[util.q];
 
-        System.out.println("Erased decoupled nodes size: " + erasedDecoupledNodes.length);
+        logger.trace("Erased decoupled nodes size: " + erasedDecoupledNodes.length);
 
     /*
     the couples can not be found for any of the nodes in the same column as the erased node
@@ -293,7 +295,7 @@ public class ClayCodeErasureDecodingStep {
             helperPlanes[i] = inputs[helperIndexes[i]];
         }
 
-        System.out.println("getHelperPlanes completed");
+        logger.debug("getHelperPlanes completed");
 
     }
 
@@ -435,7 +437,7 @@ public class ClayCodeErasureDecodingStep {
                                          int bufSize, boolean isDirect )
             throws IOException {
 
-        System.out.println("Get decoupled helper plane: " + helperPlaneIndex);
+        logger.debug("Get decoupled helper plane: " + helperPlaneIndex);
 
         int z = helperIndexes[helperPlaneIndex];
         int[] z_vec = util.getZVector(z);
@@ -454,7 +456,7 @@ public class ClayCodeErasureDecodingStep {
             if(coordinates[1]!=erasedCoordinates[1]){
 
                 if (z_vec[coordinates[1]] == coordinates[0]){
-                    System.out.println("Helper plane [" + helperPlaneIndex + "][" + i + "]");
+                    logger.trace("Helper plane [" + helperPlaneIndex + "][" + i + "]");
                     temp[i] = helperPlanes[helperPlaneIndex][i];
                 } else {
 
@@ -470,7 +472,7 @@ public class ClayCodeErasureDecodingStep {
 
                     int coupleCoordinates = util.getNodeIndex(z_vec[coordinates[1]], coordinates[1]);
 
-                    System.out.println("Helper plane [" + coupleHelperPlaneIndex + "][" + coupleCoordinates + "]");
+                    logger.trace("Helper plane [" + coupleHelperPlaneIndex + "][" + coupleCoordinates + "]");
 
                     getPairWiseCouple(new ByteBuffer[]{helperPlanes[helperPlaneIndex][i],
                                     helperPlanes[coupleHelperPlaneIndex][coupleCoordinates], null, null},
@@ -562,7 +564,7 @@ public class ClayCodeErasureDecodingStep {
         boolean[] shardPresent = getShardPresent(decoupledPlane, erasedIndexes);
         byte[][] decoupledPlaneAsBytes = getByteArray(decoupledPlane, bufSize);
 
-        System.out.println("erasedIndexes: " + Arrays.toString(erasedIndexes));
+        logger.debug("erasedIndexes: " + Arrays.toString(erasedIndexes));
 
         byte[][] outputs = new byte[erasedIndexes.length][bufSize];
 
@@ -648,7 +650,7 @@ public class ClayCodeErasureDecodingStep {
         byte[][] inputsAsBytes = getByteArray(inputs, bufSize);
         boolean[] shardPresent = getShardPresent(inputs, lostCouples);
 
-        System.out.println("Pairwise decoder: inputSize: " + inputs.length);
+        logger.trace("Pairwise decoder: inputSize: " + inputs.length);
         pairWiseDecoder.decodeMissing(inputsAsBytes, shardPresent, 0, bufSize);
 
         for (int i = 0; i < inputs.length; ++i) {
@@ -660,8 +662,6 @@ public class ClayCodeErasureDecodingStep {
             outputs[i] = ByteBuffer.wrap(inputsAsBytes[lostCouples[i]]);
             outputs[i].position(outputPos[i]);
         }
-
-        // System.out.println("getPairwise couple completed");
 
     }
 

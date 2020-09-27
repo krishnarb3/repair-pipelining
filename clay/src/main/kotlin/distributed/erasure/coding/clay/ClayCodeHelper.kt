@@ -1,6 +1,7 @@
 package distributed.erasure.coding.clay
 
 import com.backblaze.erasure.ReedSolomon
+import mu.KotlinLogging
 import java.nio.ByteBuffer
 
 class ClayCodeHelper(
@@ -12,6 +13,8 @@ class ClayCodeHelper(
     val NUM_TOTAL_UNITS = NUM_DATA_UNITS + NUM_PARITY_UNITS
     val pairWiseDecoder = ReedSolomon.create(2, 2)
     val rsRawDecoder = ReedSolomon.create(NUM_DATA_UNITS, NUM_PARITY_UNITS)
+
+    private val logger = KotlinLogging.logger {}
 
     fun getHelperPlanesAndDecode(
         util: ClayCodeErasureDecodingStep.ClayCodeUtil,
@@ -32,12 +35,6 @@ class ClayCodeHelper(
             val z = helperIndexes[i]
             val z_vec = util.getZVector(z)
 
-            val coupleCoordinates = (0 until util.q * util.t).map {  j ->
-                val coordinates = util.getNodeCoordinates(j)
-                util.getNodeIndex(z_vec[coordinates[1]], coordinates[1])
-            }.toSet()
-
-//            val indices = (setOf(z) + coupleCoordinates).toList()
             val indices = (0 until NUM_TOTAL_UNITS).toList()
 
             getHelperPlanes(blockId, helperCoupledPlanes, helperIndexes, indices, util.subPacketSize)
@@ -52,10 +49,10 @@ class ClayCodeHelper(
                 isDirect
             )
 
-            println("Completed decode single: $i")
+            logger.debug("Completed decode single: $i")
         }
 
-        println("Completed decode single for all")
+        logger.debug("Completed decode single for all")
     }
 
     private fun getHelperPlanes(
@@ -73,7 +70,8 @@ class ClayCodeHelper(
     }
 
     private fun getInput(blockId: String, subpacketIndex: Int, xIndex: Int, yIndex: Int): ByteBuffer? {
-        return inputs[xIndex * (NUM_DATA_UNITS + NUM_PARITY_UNITS) + yIndex].chunk.buffer
+        val input = inputs[xIndex * (NUM_DATA_UNITS + NUM_PARITY_UNITS) + yIndex].chunk?.buffer
+        return input
     }
 }
 
