@@ -1,10 +1,11 @@
 package distributed.erasure.coding.pipeline
 
 import distributed.erasure.coding.LRCErasureUtil
-import distributed.erasure.coding.pipeline.Util.COORDINATOR_CHANNEL_NAME
-import distributed.erasure.coding.pipeline.Util.HELPER_CHANNEL_PREFIX
-import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
-import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.COORDINATOR_CHANNEL_NAME
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.HELPER_CHANNEL_PREFIX
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.JEDIS_POOL_MAX_SIZE
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.WORD_LENGTH
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.BLOCK_SIZE
 import mu.KotlinLogging
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -18,13 +19,12 @@ open class Coordinator(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    val JEDIS_POOL_MAX_SIZE = System.getProperty("jedis.pool.max.size").toInt()
     val COORDINATOR_IP = System.getProperty("coordinator.ip")
     val REDIS_PORT = 6379
     val erasureCode = ErasureCode.valueOf(System.getProperty("erasure.code"))
-    val fetchMethod = System.getProperty("fetch.method") ?: "normal"
 
-    var jedis: Jedis
+    val jedis: Jedis
+    var pipelineUtil: PipelineUtil
 
     lateinit var latch: CountDownLatch
 
@@ -35,11 +35,12 @@ open class Coordinator(
         val jedisPool = JedisPool(jedisPoolConfig, COORDINATOR_IP, REDIS_PORT)
         val jedisForSubscribe = jedisPool.resource
         jedis = jedisPool.resource
+        pipelineUtil = PipelineUtil(jedis)
 
         val jedisPubSub = getJedisPubSub()
 
         Thread {
-            jedisForSubscribe.psubscribe(jedisPubSub, "$COORDINATOR_CHANNEL_NAME.*", "$HELPER_CHANNEL_PREFIX.*")
+            jedisForSubscribe.psubscribe(jedisPubSub, "$COORDINATOR_CHANNEL_NAME.*", "$HELPER_CHANNEL_PREFIX.*", "REFRESH")
         }.start()
 
         logger.info("Initialized coordinator")
@@ -51,14 +52,17 @@ open class Coordinator(
             when (channel) {
                 "$COORDINATOR_CHANNEL_NAME.fetch" -> fetchBlock(message)
                 "$COORDINATOR_CHANNEL_NAME.terminated" -> waitForTerminate(message)
+                "REFRESH" -> pipelineUtil = PipelineUtil(jedis)
             }
         }
     }
 
-    private fun fetchBlock(message: String) {
-        val requesterNodeId = message.split(" ")[0].toInt()
-        val blockId = message.split(" ")[1]
-        val erasedIndex = message.split(" ")[2].toInt()
+    open fun fetchBlock(message: String) {
+        val split = message.split(" ")
+        val requesterNodeId = split[0].toInt()
+        val blockId = split[1]
+        val erasedIndex = split[2].toInt()
+        val fetchMethod = split[3]
         if (fetchMethod == "pipeline") {
             fetchBlockUsingPipelining(requesterNodeId, blockId, erasedIndex)
         } else {

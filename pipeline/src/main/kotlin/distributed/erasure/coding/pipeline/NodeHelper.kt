@@ -1,9 +1,9 @@
 package distributed.erasure.coding.pipeline
 
 import distributed.erasure.coding.LRCErasureCode
-import distributed.erasure.coding.pipeline.Util.BLOCK_SIZE
-import distributed.erasure.coding.pipeline.Util.FILE_READ_BUFFER_SIZE
-import distributed.erasure.coding.pipeline.Util.WORD_LENGTH
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.BLOCK_SIZE
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.FILE_READ_BUFFER_SIZE
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.WORD_LENGTH
 import mu.KotlinLogging
 import java.io.*
 import java.net.ServerSocket

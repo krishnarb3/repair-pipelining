@@ -1,15 +1,11 @@
 package distributed.erasure.coding.pipeline
 
-import distributed.erasure.coding.clay.ClayCode
-import distributed.erasure.coding.clay.ClayCodeErasureDecodingStep
-import distributed.erasure.coding.clay.ECBlock
-import distributed.erasure.coding.pipeline.Util.CLAY_BLOCK_SIZE
-import distributed.erasure.coding.pipeline.Util.HELPER_CHANNEL_PREFIX
-import distributed.erasure.coding.pipeline.Util.NUM_DATA_UNITS
-import distributed.erasure.coding.pipeline.Util.NUM_PARITY_UNITS
-import distributed.erasure.coding.pipeline.Util.NUM_TOTAL_UNITS
-import distributed.erasure.coding.pipeline.Util.SUBPACKET_SIZE
+import distributed.erasure.coding.clay.*
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.HELPER_CHANNEL_PREFIX
 import mu.KotlinLogging
+import java.io.*
+import java.net.ServerSocket
+import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 
@@ -19,12 +15,78 @@ class ClayCoordinator(
     val blockIndexMap: MutableMap<String, Int>
 ) : Coordinator(nodeHostMap, blockNodeMap) {
 
+    private val PORT_NUMBER = System.getProperty("coordinator.local.port").toInt()
+    private val serverSocket = ServerSocket(PORT_NUMBER)
+
     private val logger = KotlinLogging.logger {}
     private var prevTime: Long = 0L
     private val terminatedMap = mutableMapOf<String, MutableMap<Int, CompletableFuture<Int>>>()
 
-    var inputs = Array((NUM_DATA_UNITS + NUM_PARITY_UNITS) * SUBPACKET_SIZE) {
-        ECBlock(false, false)
+    init {
+        for (i in 0 until pipelineUtil.numTotalUnits) {
+            for (j in 0 until pipelineUtil.subpacketSize) {
+                blockNodeMap["$i $j"] = (i * pipelineUtil.subpacketSize + j) % pipelineUtil.numTotalUnits
+                blockIndexMap["$i $j"] = (i * pipelineUtil.subpacketSize + j)
+            }
+        }
+    }
+
+    override fun fetchBlock(message: String) {
+        val split = message.split(" ")
+        val requesterNodeId = split[0].toInt()
+        val blockId = split[1]
+        val erasedIndex = split[2].toInt()
+        val fetchMethod = split[3]
+        if (fetchMethod == "pipeline") {
+            fetchBlockUsingPipelining(requesterNodeId, blockId, erasedIndex)
+        } else {
+            fetchBlock(requesterNodeId, blockId, erasedIndex)
+        }
+    }
+
+    fun fetchBlock(requesterNodeId: Int, blockId: String, erasedIndex: Int) {
+        val erasedIndexes = intArrayOf(erasedIndex)
+        val util = ClayCodeErasureDecodingStep.ClayCodeUtil(
+            erasedIndexes, pipelineUtil.numDataUnits, pipelineUtil.numParityUnits
+        )
+        val parityIndexes = (pipelineUtil.numDataUnits until pipelineUtil.numTotalUnits).toList().toIntArray()
+        val clayCode = ClayCode(pipelineUtil.numDataUnits, pipelineUtil.numParityUnits, pipelineUtil.clayBlockSize, parityIndexes)
+        val originalInputs = clayCode.getInputs()
+        val originalOutputs = clayCode.getOutputs()
+        val encodedResult = clayCode.encode(originalInputs, originalOutputs)
+        val constructInputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+
+        val inputs = Array((pipelineUtil.numDataUnits + pipelineUtil.numParityUnits) * pipelineUtil.subpacketSize) {
+            ECBlock(false, false)
+        }
+        val prevTime = System.nanoTime()
+
+        for (i in 0 until pipelineUtil.subpacketSize) {
+            for (j in 0 until pipelineUtil.numDataUnits + pipelineUtil.numParityUnits) {
+                val inputIndex = i * (pipelineUtil.numDataUnits + pipelineUtil.numParityUnits) + j
+
+                if (j != erasedIndex) {
+                    val fileName = "$blockId.$j.$i"
+                    val message = "$fileName $COORDINATOR_IP $PORT_NUMBER"
+                    jedis.publish("$HELPER_CHANNEL_PREFIX.$j.send.data", message)
+                    val data = receiveData(pipelineUtil.clayBlockSize)[0]
+                    inputs[inputIndex] = ECBlock(ECChunk(ByteBuffer.wrap(data)), false, false)
+                }
+            }
+        }
+
+        logger.info("Time taken to fetch inputs: ${(System.nanoTime() - prevTime)/1000000000.0}")
+
+        val outputsArray = Array(pipelineUtil.subpacketSize) { Array(erasedIndexes.size) { ByteBuffer.wrap(ByteArray(pipelineUtil.clayBlockSize)) } }
+
+        val clayCodeHelper = ClayCodeHelper(pipelineUtil.numDataUnits, pipelineUtil.numParityUnits, pipelineUtil.subpacketSize, inputs)
+        clayCodeHelper.getHelperPlanesAndDecode(util, blockId, outputsArray, erasedIndex, pipelineUtil.clayBlockSize, false)
+
+        val currentTime = System.nanoTime()
+        val timeElapsed = (currentTime - prevTime)/1000000000.0
+        logger.info("Completed fetch block: $blockId without using pipelining")
+        logger.info("Time taken: $timeElapsed")
+        cleanup()
     }
 
     override fun fetchBlockUsingPipelining(finalNodeId: Int, blockId: String, erasedIndex: Int) {
@@ -35,17 +97,19 @@ class ClayCoordinator(
         val erasedIndexes = intArrayOf(erasedIndex)
         val isDirect = true
         val util = ClayCodeErasureDecodingStep.ClayCodeUtil(
-            erasedIndexes, NUM_DATA_UNITS, NUM_PARITY_UNITS
+            erasedIndexes, pipelineUtil.numDataUnits, pipelineUtil.numParityUnits
         )
-        val parityIndexes = (NUM_DATA_UNITS until NUM_TOTAL_UNITS).toList().toIntArray()
-        val clayCode = ClayCode(NUM_DATA_UNITS, NUM_PARITY_UNITS, CLAY_BLOCK_SIZE, parityIndexes)
+        val parityIndexes = (pipelineUtil.numDataUnits until pipelineUtil.numTotalUnits).toList().toIntArray()
+        val clayCode = ClayCode(pipelineUtil.numDataUnits, pipelineUtil.numParityUnits, pipelineUtil.clayBlockSize, parityIndexes)
         val originalInputs = clayCode.getInputs()
         val originalOutputs = clayCode.getOutputs()
         val encodedResult = clayCode.encode(originalInputs, originalOutputs)
 
-        inputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+        terminatedMap.clear()
 
-        for (i in 0 until NUM_TOTAL_UNITS) {
+        val inputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
+
+        for (i in 0 until pipelineUtil.numTotalUnits) {
             val futures = terminatedMap[blockId] ?: mutableMapOf()
             futures[i] = CompletableFuture()
             terminatedMap[blockId] = futures
@@ -55,6 +119,15 @@ class ClayCoordinator(
         logger.info("Starting decode")
 
         decode(util, blockId, erasedIndex)
+    }
+
+    fun cleanup() {
+        val files = File(".").listFiles { dir, name ->
+            name.startsWith("LP ") || name.startsWith("ORIGINAL")
+        } ?: emptyArray()
+        for (file in files) {
+            file.delete()
+        }
     }
 
     override fun waitForTerminate(message: String) {
@@ -72,6 +145,7 @@ class ClayCoordinator(
             val timeElapsed = (currentTime - prevTime)/1000000000.0
             logger.info("Completed fetch block: $blockId using pipelining")
             logger.info("Time taken: $timeElapsed")
+            cleanup()
         }
     }
 
@@ -94,9 +168,6 @@ class ClayCoordinator(
                 erasedDecoupledNodes[x] = util.getNodeIndex(x, y)
             }
             logger.debug("Erased decoupled nodes: ${erasedDecoupledNodes.joinToString(",")}")
-
-            // Currently running into a race condition issue without some delay
-            Thread.sleep(1000)
 
             decodeDecoupledData(blockId, erasedDecoupledNodes, helperIndexes[i])
 
@@ -146,7 +217,7 @@ class ClayCoordinator(
     private fun storeDecoupledData(blockId: String, nodeIndex: Int, subpacketIndex: Int) {
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$nodeIndex.store.decoupled.data",
-            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE"
+            "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}"
         )
     }
 
@@ -163,11 +234,11 @@ class ClayCoordinator(
             ?: throw Exception("Host details not found for $receiverNode")
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$receiverNode.receive.decoupled.data",
-            "$blockId $receiverSubpacketIndex $CLAY_BLOCK_SIZE"
+            "$blockId $receiverSubpacketIndex ${pipelineUtil.clayBlockSize}"
         )
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$senderNode.send.data.for.decouple",
-            "$blockId $senderSubpacketIndex $CLAY_BLOCK_SIZE $receiverHost $receiverPort"
+            "$blockId $senderSubpacketIndex ${pipelineUtil.clayBlockSize} $receiverHost $receiverPort"
         )
     }
 
@@ -185,12 +256,12 @@ class ClayCoordinator(
             val receiverPort = nodeHostMap[receiverId]?.second ?: throw Exception("Port not found for $receiverId")
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$receiverId.receive.output.data",
-                "$blockId $subpacketIndex $CLAY_BLOCK_SIZE ${erasedDecoupledNodes.size}"
+                "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize} ${erasedDecoupledNodes.size}"
             )
             val first = i == 0
-            val message = "$blockId $subpacketIndex $CLAY_BLOCK_SIZE" +
+            val message = "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}" +
                     " $receiverHost $receiverPort $i" +
-                    " $NUM_DATA_UNITS $NUM_PARITY_UNITS" +
+                    " ${pipelineUtil.numDataUnits} ${pipelineUtil.numParityUnits}" +
                     " ${erasedDecoupledNodes.joinToString(",")} $first"
             jedis.publish("$HELPER_CHANNEL_PREFIX.$senderId.decode.and.send", message)
         }
@@ -207,15 +278,15 @@ class ClayCoordinator(
             outputIndexes.add(index)
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$receiverId.receive.decoded.data",
-                "$blockId $subpacketIndex $CLAY_BLOCK_SIZE"
+                "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}"
             )
         }
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$lastNodeId.send.decoded.data",
-            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE" +
+            "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}" +
                     " ${receiverHosts.joinToString(",")} ${receiverPorts.joinToString(",")}" +
                     " ${nodesPath.lastIndex} ${outputIndexes.joinToString(",")}" +
-                    " $NUM_DATA_UNITS $NUM_PARITY_UNITS" +
+                    " ${pipelineUtil.numDataUnits} ${pipelineUtil.numParityUnits}" +
                     " ${erasedDecoupledNodes.joinToString(",")} false"
         )
     }
@@ -245,7 +316,7 @@ class ClayCoordinator(
     private fun storeErasedData(blockId: String, nodeIndex: Int, subpacketIndex: Int) {
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$nodeIndex.store.erased.data",
-            "$blockId $subpacketIndex $CLAY_BLOCK_SIZE"
+            "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}"
         )
     }
 
@@ -257,39 +328,49 @@ class ClayCoordinator(
         logger.debug("Node $nodeIndex sending erased data to $receiverId")
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$receiverId.receive.erased.data",
-            "$blockId $zIndex $CLAY_BLOCK_SIZE"
+            "$blockId $zIndex ${pipelineUtil.clayBlockSize}"
         )
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$nodeIndex.send.erased.data",
-            "$blockId $coupleSubpacketIndex $decoupleSubpacketIndex $CLAY_BLOCK_SIZE $receiverHost $receiverPort"
+            "$blockId $coupleSubpacketIndex $decoupleSubpacketIndex ${pipelineUtil.clayBlockSize} $receiverHost $receiverPort"
         )
     }
 
     private fun getNodesPath(blockId: String, erasedNodes: IntArray): List<Int> {
-        return (0 until NUM_TOTAL_UNITS).filterNot { erasedNodes.contains(it) }
+        return (0 until pipelineUtil.numTotalUnits).filterNot { erasedNodes.contains(it) }
+    }
+
+    @Synchronized
+    private fun receiveData(blockSize: Int, noOfBlocks: Int = 1): Array<ByteArray> {
+        return serverSocket.accept().use { socket ->
+            DataInputStream(BufferedInputStream(socket.getInputStream())).use { socketIn ->
+                // Read 8KB blocks
+                var bytesRead = 0
+                val buffer = ByteBuffer.allocate(blockSize * noOfBlocks)
+                while (socketIn.available() > 0 || bytesRead < blockSize * noOfBlocks) {
+                    val data = socketIn.readBytes()
+                    buffer.put(data)
+                    bytesRead += data.size
+                }
+                buffer.flip()
+                val result = Array(noOfBlocks) { ByteArray(blockSize) }
+                for (i in 0 until noOfBlocks) {
+                    buffer.get(result[i])
+                }
+                result
+            }
+        }
     }
 }
 
 fun main() {
-    val nodeHostMap = mutableMapOf(
-        0 to Pair("127.0.0.1", 1111),
-        1 to Pair("127.0.0.1", 2222),
-        2 to Pair("127.0.0.1", 3333),
-        3 to Pair("127.0.0.1", 4444),
-        4 to Pair("127.0.0.1", 5555),
-        5 to Pair("127.0.0.1", 6666)
-    )
+    val nodeHostMap = (0 until 15)
+        .map { Pair(it, Pair("127.0.0.1", 1111*(it+1))) }
+        .toMap()
     val blockNodeMap = LinkedHashMap<String, Int>()
     val blockIndexMap = mutableMapOf<String, Int>()
 
-    for (i in 0 until NUM_TOTAL_UNITS) {
-        for (j in 0 until SUBPACKET_SIZE) {
-            blockNodeMap["$i $j"] = (i * SUBPACKET_SIZE + j) % NUM_TOTAL_UNITS
-            blockIndexMap["$i $j"] = (i * SUBPACKET_SIZE + j)
-        }
-    }
-
-    val coordinator = ClayCoordinator(nodeHostMap, blockNodeMap, blockIndexMap)
+    val coordinator = ClayCoordinator(nodeHostMap.toMutableMap(), blockNodeMap, blockIndexMap)
 
     while (true) {
         val latch = CountDownLatch(1)

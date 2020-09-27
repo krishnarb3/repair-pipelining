@@ -8,6 +8,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 import java.util.stream.Collectors;
 
 public class ClayCode {
@@ -46,7 +47,7 @@ public class ClayCode {
     public ECBlock[] getInputs() throws Exception {
         File inputFile = new File("LP-block.jpg");
         DataInputStream dataInputStream = new DataInputStream(new FileInputStream(inputFile));
-
+        Random random = new Random(123456);
         int inputsLength = (numDataUnits + numParityUnits) * clayCodeUtil.getSubPacketSize();
 
         ECBlock[] inputs = new ECBlock[inputsLength];
@@ -57,7 +58,9 @@ public class ClayCode {
             for (int j = 0; j < clayCodeUtil.getSubPacketSize(); j++) {
                 int k = i * clayCodeUtil.getSubPacketSize() + j;
                 if (counter < numDataUnits) {
-                    ByteBuffer buffer = allocateOutputBuffer(blockSize, dataInputStream.readNBytes(blockSize));
+                    byte[] array = new byte[blockSize];
+                    random.nextBytes(array);
+                    ByteBuffer buffer = allocateOutputBuffer(blockSize, array);
                     ECChunk chunk = new ECChunk(buffer);
                     inputs[k] = new ECBlock(chunk, false, false);
                 } else {
@@ -138,7 +141,7 @@ public class ClayCode {
             for (int j = 0; j < numDataUnits + numParityUnits; j++) {
                 int inputIndex = i * (numDataUnits + numParityUnits) + j;
                 String prefix = "";
-                if (j == 1) {
+                if (erasedIndexes.contains(j)) {
                     prefix = "ORIGINAL ";
                 }
                 if (inputs[inputIndex].getBuffer() != null) {

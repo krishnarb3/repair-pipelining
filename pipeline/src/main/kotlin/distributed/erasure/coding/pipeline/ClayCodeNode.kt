@@ -2,8 +2,8 @@ package distributed.erasure.coding.pipeline
 
 import com.backblaze.erasure.InputOutputByteTableCodingLoop
 import com.backblaze.erasure.ReedSolomon
-import distributed.erasure.coding.pipeline.Util.COORDINATOR_CHANNEL_NAME
-import distributed.erasure.coding.pipeline.Util.HELPER_CHANNEL_PREFIX
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.COORDINATOR_CHANNEL_NAME
+import distributed.erasure.coding.pipeline.PipelineUtil.Companion.HELPER_CHANNEL_PREFIX
 import mu.KotlinLogging
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPool
@@ -57,6 +57,7 @@ class ClayCodeNode : Node {
         override fun onPMessage(pattern: String, channel: String, message: String) {
             _latch.countDown()
             when (channel) {
+                "$HELPER_CHANNEL_PREFIX.$nodeId.send.data" -> sendData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.store.decoupled.data" -> storeDecoupledData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.receive.decoupled.data" -> receiveDecoupledData(message)
                 "$HELPER_CHANNEL_PREFIX.$nodeId.send.data.for.decouple" -> sendDataForDecouple(message)
@@ -73,6 +74,30 @@ class ClayCodeNode : Node {
                 }
             }
         }
+    }
+
+    @Synchronized
+    private fun sendData(message: String) {
+        val split = message.split(" ")
+        val fileName = split[0].replace(".", " ")
+        val host = split[1]
+        val port = split[2].toInt()
+
+        val file = File(fileName)
+        val data = file.readBytes()
+        logger.debug("Sending data for file: $fileName")
+        sendData(host, port, data)
+    }
+
+    @Synchronized
+    private fun receiveData(message: String) {
+        val split = message.split(" ")
+        val fileName = split[0].replace(".", " ")
+        val blockSize = split[2].toInt()
+        val file = File(fileName)
+        val data = receiveData(blockSize)[0]
+        logger.debug("Received data for file: $fileName, size: ${data.size}")
+        file.writeBytes(data)
     }
 
     @Synchronized
@@ -125,7 +150,7 @@ class ClayCodeNode : Node {
         val file = File("$blockId $nodeId $subpacketIndex")
         val data = file.readBytes()
         logger.debug("Send data for decouple ($blockId $nodeId $subpacketIndex)")
-        sendData(blockSize, host, port, data)
+        sendData(host, port, data)
     }
 
     @Synchronized
@@ -164,11 +189,11 @@ class ClayCodeNode : Node {
         rsDecoder.decodeMissingSingle(inputShard, nodeId.toInt(), index, shardPresent, outputs, 0, blockSize, isFirst)
 
         val data = ByteBuffer.allocate(erasedIndexes.size * blockSize)
-        for (i in erasedIndexes) {
+        for (i in erasedIndexes.indices) {
             data.put(outputs[i])
         }
         logger.debug("Sending $subpacketIndex data to $receiverPort")
-        sendData(blockSize, receiverHost, receiverPort, data.array())
+        sendData(receiverHost, receiverPort, data.array())
     }
 
     @Synchronized
@@ -206,7 +231,7 @@ class ClayCodeNode : Node {
         rsDecoder.decodeMissingSingle(inputShard, nodeId.toInt(), index, shardPresent, outputs, 0, blockSize, isFirst)
 
         for (i in erasedIndexes.indices) {
-            sendData(blockSize, receiverHosts[i], receiverPorts[i], outputs[outputIndexes[i]])
+            sendData(receiverHosts[i], receiverPorts[i], outputs[outputIndexes[i]])
         }
     }
 
@@ -251,7 +276,7 @@ class ClayCodeNode : Node {
         val inputs = arrayOf(ByteArray(blockSize), coupledData, ByteArray(blockSize), decoupledDataMap["$blockId $nodeId $decoupleSubpacketIndex"])
         pairwiseDecoder.decodeMissing(inputs, booleanArrayOf(false, true, false, true), 0, blockSize)
 
-        sendData(blockSize, receiverHost, receiverPort, inputs[0]!!)
+        sendData(receiverHost, receiverPort, inputs[0]!!)
     }
 
     @Synchronized
@@ -278,20 +303,28 @@ class ClayCodeNode : Node {
 
     @Synchronized
     private fun receiveData(blockSize: Int, noOfBlocks: Int = 1): Array<ByteArray> {
-        serverSocket.accept().use { socket ->
+        return serverSocket.accept().use { socket ->
             DataInputStream(BufferedInputStream(socket.getInputStream())).use { socketIn ->
-                while (socketIn.available() < blockSize * noOfBlocks) {
-                    // Wait for data
+                // Read 8KB blocks
+                var bytesRead = 0
+                val buffer = ByteBuffer.allocate(blockSize * noOfBlocks)
+                while (socketIn.available() > 0 || bytesRead < blockSize * noOfBlocks) {
+                    val data = socketIn.readBytes()
+                    buffer.put(data)
+                    bytesRead += data.size
                 }
-                return (0 until noOfBlocks).map {
-                    socketIn.readNBytes(blockSize)
-                }.toTypedArray()
+                buffer.flip()
+                val result = Array(noOfBlocks) { ByteArray(blockSize) }
+                for (i in 0 until noOfBlocks) {
+                    buffer.get(result[i])
+                }
+                result
             }
         }
     }
 
     @Synchronized
-    private fun sendData(blockSize: Int, receiverHost: String, receiverPort: Int, data: ByteArray) {
+    private fun sendData(receiverHost: String, receiverPort: Int, data: ByteArray) {
         Socket(receiverHost, receiverPort).use { socket ->
             DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { socketOut ->
                 socketOut.write(data)
