@@ -3,6 +3,7 @@ package distributed.erasure.coding.pipeline
 import distributed.erasure.coding.clay.*
 import distributed.erasure.coding.pipeline.PipelineUtil.Companion.HELPER_CHANNEL_PREFIX
 import mu.KotlinLogging
+import redis.clients.jedis.StreamEntryID
 import java.io.*
 import java.net.ServerSocket
 import java.nio.ByteBuffer
@@ -106,6 +107,9 @@ class ClayCoordinator(
         val encodedResult = clayCode.encode(originalInputs, originalOutputs)
 
         terminatedMap.clear()
+        for ((host, port) in nodeHostMap) {
+            jedis.xtrim("$host $port", 0, false)
+        }
 
         val inputs = clayCode.getTestInputs(encodedResult[0], encodedResult[1], erasedIndexes)
 
@@ -232,6 +236,8 @@ class ClayCoordinator(
             ?: throw Exception("Host details not found for $receiverNode")
         val receiverPort = nodeHostMap[receiverNode]?.second
             ?: throw Exception("Host details not found for $receiverNode")
+        logger.debug("Send and store decoupled data to $receiverNode from $senderNode")
+        waitForJedis(receiverHost, receiverPort)
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$receiverNode.receive.decoupled.data",
             "$blockId $receiverSubpacketIndex ${pipelineUtil.clayBlockSize}"
@@ -240,6 +246,7 @@ class ClayCoordinator(
             "$HELPER_CHANNEL_PREFIX.$senderNode.send.data.for.decouple",
             "$blockId $senderSubpacketIndex ${pipelineUtil.clayBlockSize} $receiverHost $receiverPort"
         )
+        jedis.xadd("$receiverHost $receiverPort", null, mapOf("lock" to "$senderNode"))
     }
 
     private fun decodeDecoupledData(
@@ -254,6 +261,7 @@ class ClayCoordinator(
             val senderId = nodesPath[i]
             val receiverHost = nodeHostMap[receiverId]?.first ?: throw Exception("Host not found for $receiverId")
             val receiverPort = nodeHostMap[receiverId]?.second ?: throw Exception("Port not found for $receiverId")
+            waitForJedis(receiverHost, receiverPort)
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$receiverId.receive.output.data",
                 "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize} ${erasedDecoupledNodes.size}"
@@ -264,6 +272,7 @@ class ClayCoordinator(
                     " ${pipelineUtil.numDataUnits} ${pipelineUtil.numParityUnits}" +
                     " ${erasedDecoupledNodes.joinToString(",")} $first"
             jedis.publish("$HELPER_CHANNEL_PREFIX.$senderId.decode.and.send", message)
+            jedis.xadd("$receiverHost $receiverPort", null, mapOf("lock" to "$senderId"))
         }
 
         // Send to erased nodes
@@ -273,13 +282,18 @@ class ClayCoordinator(
         val outputIndexes = mutableListOf<Int>()
         for (index in erasedDecoupledNodes.indices) {
             val receiverId = erasedDecoupledNodes[index]
-            receiverHosts.add(nodeHostMap[receiverId]?.first ?: throw Exception("Host not found for $receiverId"))
-            receiverPorts.add(nodeHostMap[receiverId]?.second ?: throw Exception("Port not found for $receiverId"))
+            val nodeHostPort = nodeHostMap[receiverId] ?: throw Exception("Host not found for $receiverId")
+            val receiverHost = nodeHostPort.first
+            val receiverPort = nodeHostPort.second
+            receiverHosts.add(receiverHost)
+            receiverPorts.add(receiverPort)
+            waitForJedis(receiverHost, receiverPort)
             outputIndexes.add(index)
             jedis.publish(
                 "$HELPER_CHANNEL_PREFIX.$receiverId.receive.decoded.data",
                 "$blockId $subpacketIndex ${pipelineUtil.clayBlockSize}"
             )
+            jedis.xadd("$receiverHost $receiverPort", null, mapOf("lock" to "$lastNodeId"))
         }
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$lastNodeId.send.decoded.data",
@@ -326,6 +340,7 @@ class ClayCoordinator(
         receiverId: Int, receiverHost: String, receiverPort: Int
     ) {
         logger.debug("Node $nodeIndex sending erased data to $receiverId")
+        waitForJedis(receiverHost, receiverPort)
         jedis.publish(
             "$HELPER_CHANNEL_PREFIX.$receiverId.receive.erased.data",
             "$blockId $zIndex ${pipelineUtil.clayBlockSize}"
@@ -334,6 +349,7 @@ class ClayCoordinator(
             "$HELPER_CHANNEL_PREFIX.$nodeIndex.send.erased.data",
             "$blockId $coupleSubpacketIndex $decoupleSubpacketIndex ${pipelineUtil.clayBlockSize} $receiverHost $receiverPort"
         )
+        jedis.xadd("$receiverHost $receiverPort", null, mapOf("lock" to "$nodeIndex"))
     }
 
     private fun getNodesPath(blockId: String, erasedNodes: IntArray): List<Int> {
@@ -347,7 +363,10 @@ class ClayCoordinator(
                 // Read 8KB blocks
                 var bytesRead = 0
                 val buffer = ByteBuffer.allocate(blockSize * noOfBlocks)
-                while (socketIn.available() > 0 || bytesRead < blockSize * noOfBlocks) {
+                while (socketIn.available() < 0) {
+                    // Wait for data
+                }
+                while (bytesRead < blockSize * noOfBlocks) {
                     val data = socketIn.readBytes()
                     buffer.put(data)
                     bytesRead += data.size
@@ -361,12 +380,34 @@ class ClayCoordinator(
             }
         }
     }
+
+    private fun waitForJedis(receiverHost: String, receiverPort: Int) {
+        logger.debug("Wait for data: $receiverHost $receiverPort")
+        var stream = jedis.xread(Integer.MAX_VALUE, 10, java.util.AbstractMap.SimpleImmutableEntry(
+            "$receiverHost $receiverPort", StreamEntryID()
+        ))
+        if (stream.isEmpty() || stream.none { it.key == "$receiverHost $receiverPort" }) {
+            return
+        }
+        var lastEntry = stream.last { it.key == "$receiverHost $receiverPort" }
+        var lastStreamEntryId = lastEntry.value.last().id
+        while (lastEntry.value.last().fields["lock"] != "released") {
+            stream = jedis.xread(Integer.MAX_VALUE, 10, java.util.AbstractMap.SimpleImmutableEntry(
+                "$receiverHost $receiverPort", lastStreamEntryId
+            ))
+            if (stream.isNotEmpty()) {
+                lastEntry = stream.last { it.key == "$receiverHost $receiverPort" }
+                lastStreamEntryId = lastEntry.value.last().id
+            }
+        }
+    }
 }
 
 fun main() {
     val nodeHostMap = (0 until 15)
         .map { Pair(it, Pair("127.0.0.1", 1111*(it+1))) }
         .toMap()
+
     val blockNodeMap = LinkedHashMap<String, Int>()
     val blockIndexMap = mutableMapOf<String, Int>()
 

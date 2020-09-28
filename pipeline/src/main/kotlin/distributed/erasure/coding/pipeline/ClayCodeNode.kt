@@ -5,10 +5,7 @@ import com.backblaze.erasure.ReedSolomon
 import distributed.erasure.coding.pipeline.PipelineUtil.Companion.COORDINATOR_CHANNEL_NAME
 import distributed.erasure.coding.pipeline.PipelineUtil.Companion.HELPER_CHANNEL_PREFIX
 import mu.KotlinLogging
-import redis.clients.jedis.Jedis
-import redis.clients.jedis.JedisPool
-import redis.clients.jedis.JedisPoolConfig
-import redis.clients.jedis.JedisPubSub
+import redis.clients.jedis.*
 import java.io.*
 import java.net.ServerSocket
 import java.net.Socket
@@ -303,13 +300,17 @@ class ClayCodeNode : Node {
 
     @Synchronized
     private fun receiveData(blockSize: Int, noOfBlocks: Int = 1): Array<ByteArray> {
-        return serverSocket.accept().use { socket ->
+        logger.debug("Receiving data, $noOfBlocks")
+        val data = serverSocket.accept().use { socket ->
             DataInputStream(BufferedInputStream(socket.getInputStream())).use { socketIn ->
                 // Read 8KB blocks
                 var bytesRead = 0
                 val buffer = ByteBuffer.allocate(blockSize * noOfBlocks)
-                while (socketIn.available() > 0 || bytesRead < blockSize * noOfBlocks) {
-                    val data = socketIn.readBytes()
+                while (socketIn.available() < 0) {
+                    // Wait for data
+                }
+                while (bytesRead < blockSize * noOfBlocks) {
+                    val data = socketIn.readNBytes(blockSize)
                     buffer.put(data)
                     bytesRead += data.size
                 }
@@ -321,13 +322,38 @@ class ClayCodeNode : Node {
                 result
             }
         }
+        jedis.xadd("$LOCAL_IP $PORT_NUMBER", null, mapOf("lock" to "released"))
+        logger.debug("Node $nodeId released lock on $PORT_NUMBER")
+        return data
     }
 
     @Synchronized
     private fun sendData(receiverHost: String, receiverPort: Int, data: ByteArray) {
+        waitForJedis(receiverHost, receiverPort, nodeId.toString())
         Socket(receiverHost, receiverPort).use { socket ->
             DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { socketOut ->
                 socketOut.write(data)
+            }
+        }
+    }
+
+    private fun waitForJedis(receiverHost: String, receiverPort: Int, flag: String) {
+        logger.debug("Waiting to send to $receiverHost $receiverPort")
+        var stream = jedis.xread(Integer.MAX_VALUE, 10, java.util.AbstractMap.SimpleImmutableEntry(
+            "$receiverHost $receiverPort", StreamEntryID()
+        ))
+        if (stream.isEmpty() || stream.none { it.key == "$receiverHost $receiverPort" }) {
+            return
+        }
+        var lastEntry = stream.last { it.key == "$receiverHost $receiverPort" }
+        var lastStreamEntryId = lastEntry.value.last().id
+        while (lastEntry.value.last().fields["lock"] != flag) {
+            stream = jedis.xread(Integer.MAX_VALUE, 10, java.util.AbstractMap.SimpleImmutableEntry(
+                "$receiverHost $receiverPort", lastStreamEntryId
+            ))
+            if (stream.isNotEmpty()) {
+                lastEntry = stream.last { it.key == "$receiverHost $receiverPort" }
+                lastStreamEntryId = lastEntry.value.last().id
             }
         }
     }
