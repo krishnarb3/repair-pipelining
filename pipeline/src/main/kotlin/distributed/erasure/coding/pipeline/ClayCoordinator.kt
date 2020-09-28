@@ -404,7 +404,7 @@ class ClayCoordinator(
 }
 
 fun main() {
-    val nodeHostMap = (0 until 15)
+    val nodeHostMap = (0 until 16)
         .map { Pair(it, Pair("127.0.0.1", 1111*(it+1))) }
         .toMap()
 

@@ -83,7 +83,7 @@ class ClayCodeNode : Node {
         val file = File(fileName)
         val data = file.readBytes()
         logger.debug("Sending data for file: $fileName")
-        sendData(host, port, data)
+        sendDataRaw(host, port, data)
     }
 
     @Synchronized
@@ -330,6 +330,15 @@ class ClayCodeNode : Node {
     @Synchronized
     private fun sendData(receiverHost: String, receiverPort: Int, data: ByteArray) {
         waitForJedis(receiverHost, receiverPort, nodeId.toString())
+        Socket(receiverHost, receiverPort).use { socket ->
+            DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { socketOut ->
+                socketOut.write(data)
+            }
+        }
+    }
+
+    @Synchronized
+    private fun sendDataRaw(receiverHost: String, receiverPort: Int, data: ByteArray) {
         Socket(receiverHost, receiverPort).use { socket ->
             DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { socketOut ->
                 socketOut.write(data)
