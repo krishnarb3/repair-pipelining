@@ -18,6 +18,7 @@ class ClayCoordinator(
 
     private val PORT_NUMBER = System.getProperty("coordinator.local.port").toInt()
     private val serverSocket = ServerSocket(PORT_NUMBER)
+    private val mode = System.getProperty("mode", "local")
 
     private val logger = KotlinLogging.logger {}
     private var prevTime: Long = 0L
@@ -30,6 +31,18 @@ class ClayCoordinator(
                 blockIndexMap["$i $j"] = (i * pipelineUtil.subpacketSize + j)
             }
         }
+        if (mode == "cluster") {
+            val stream = jedis.xread(1000, 10, java.util.AbstractMap.SimpleImmutableEntry(
+                "node.info", StreamEntryID()
+            ))
+            for (entry in stream) {
+                entry.value.forEach {
+                    val nodeInfo = Triple(it.fields["nodeId"]!!, it.fields["nodeHost"]!!, it.fields["nodePort"]!!)
+                    nodeHostMap[nodeInfo.first.toInt()] = Pair(nodeInfo.second, nodeInfo.third.toInt())
+                }
+            }
+        }
+        logger.info("NodeHostMap: $nodeHostMap")
     }
 
     override fun fetchBlock(message: String) {
@@ -404,9 +417,16 @@ class ClayCoordinator(
 }
 
 fun main() {
-    val nodeHostMap = (0 until 16)
-        .map { Pair(it, Pair("127.0.0.1", 1111*(it+1))) }
-        .toMap()
+    val mode = System.getProperty("mode", "local")
+
+    val nodeHostMap = if (mode == "local") {
+        (0 until 16)
+            .map { Pair(it, Pair("127.0.0.1", 1111*(it+1))) }
+            .toMap()
+    } else {
+        mutableMapOf()
+    }
+
 
     val blockNodeMap = LinkedHashMap<String, Int>()
     val blockIndexMap = mutableMapOf<String, Int>()
