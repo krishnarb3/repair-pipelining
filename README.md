@@ -12,6 +12,37 @@ Build FAT jar:
 ./gradlew clean shadowJar
 ```
 
+## Repair pipelining using Clay code
+
+Start redis server:
+```bash
+redis-server
+```
+
+Set reference data:
+```bash
+redis-cli SET NUM_DATA_UNITS 4
+redis-cli SET NUM_PARITY_UNITS 2
+redis-cli SET CLAY_BLOCK_SIZE 32768
+# For each node:
+redis-cli XADD "node.info" * nodeId 0 nodeHost 127.0.0.1 nodePort 1111
+```
+
+Generate encoded blocks (Without starting helper nodes):
+```bash
+java -Xms128m -Xmx3072m -Denv=local -Djedis.pool.max.size=10 -Dcoordinator.ip=127.0.0.1 -Dcoordinator.local.port=1234 -Derasure.code=CLAY -Dfetch.method=normal -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG -cp pipeline/build/libs/pipeline-1.0-SNAPSHOT-all.jar distributed.erasure.coding.pipeline.ClayCoordinatorKt
+```
+
+Start helper nodes (Change IP accordingly based on local/aws setup):
+```bash
+java -Dnode.local.ip=127.0.0.1 -Dcoordinator.ip=127.0.0.1 -Dnode.local.port=1111 -Dnode.local.id=0 -Djedis.pool.max.size=10 -Dorg.slf4j.simpleLogger.defaultLogLevel=DEBUG -cp pipeline/build/libs/pipeline-1.0-SNAPSHOT-all.jar distributed.erasure.coding.pipeline.ClayCodeNodeKt
+```
+
+Start repair using pipelining:
+```bash
+redis-cli PUBLISH coordinator.fetch "1 LP 1 pipeline" 
+```
+
 ## Repair pipelining using LRC
 
 Start redis server:
@@ -32,6 +63,8 @@ java -Denv=local -Djedis.pool.max.size=10 -Dcoordinator.ip=127.0.0.1 -Derasure.c
 ```
 
 Start Helper nodes:
+```bash
+
 
 Note that Helper nodes can be started on any host, accordingly change main method in Coordinator.kt
 
